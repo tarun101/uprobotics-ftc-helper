@@ -14,7 +14,7 @@ or use the "Report a problem" link on the page instead.
 ## How it works
 
 ```
-Mac mini (home internet) — launchd, nightly 02:00 ET
+Mac mini (home internet) — launchd at 23:00, 02:00 and 05:00 ET
   ftc_index.py run
     ├─ FIRST: HTML manual → one Markdown file per rule / section; Team Update PDFs → one file each; hub → one file
     ├─ YouTube: RSS + yt-dlp captions → one Markdown file per 2–3 minute window (with &t= link)
@@ -38,7 +38,7 @@ downloaded; captions only. No logins, cookies, or proxies.
 | `youtube_sources.py` | RSS / flat-playlist discovery, yt-dlp captions, 2–3 minute windows, season labels |
 | `config.yaml` | Channels and filters, instance name, paths (no secrets) |
 | `page/` | Static page for `ftc.uprobotics.tech` (Cloudflare AI Search UI snippets) + `wrangler.jsonc` |
-| `launchd/` | launchd plist template for the 02:00 nightly run |
+| `launchd/` | launchd plist template for the 23:00 / 02:00 / 05:00 runs |
 | `tests/` | 30-question test and bad-question list used for acceptance |
 
 ## Setup (Mac mini)
@@ -67,7 +67,7 @@ downloaded; captions only. No logins, cookies, or proxies.
    .venv/bin/python ftc_index.py first            # rules content
    .venv/bin/python ftc_index.py backfill          # discover every channel, index up to 150 videos (repeat daily until caught up)
    ```
-8. Schedule (02:00 local time nightly):
+8. Schedule (23:00, 02:00 and 05:00 local time; three runs while the video backlog drains):
    ```bash
    sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
    cp ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist /Users/Shared/ftc-tools/

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Nightly FTC index refresh at 02:00 local time (America/New_York on the Mac mini; Tarun ruling 2026-09-12: 2 AM so indexing never competes with homework-time questions).
+  <!-- FTC index refresh at 23:00, 02:00 and 05:00 local time (America/New_York on the Mac mini; Tarun ruling 2026-09-12: three off-hours runs while the YouTube backlog drains; the run lock skips an overlap).
        Install: sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template \
                   > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
                 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist -->
@@ -15,7 +15,11 @@
   </array>
   <key>WorkingDirectory</key><string>__REPO__</string>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+  <array>
+    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/ftc-index/launchd.out.log</string>
