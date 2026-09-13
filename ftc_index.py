@@ -435,15 +435,30 @@ class Indexer:
             season_starts = date.fromisoformat(season_starts)
         rows = self.state.pending_videos(limit)
         log.info("processing up to %d pending videos (%d queued)", limit, len(rows))
+        blocked_streak = 0
         for i, row in enumerate(rows):
             vid = row["video_id"]
             ch = chans.get(row["channel_id"])
             try:
                 cap = yt.fetch_captions(vid, workdir, self.cfg["paths"]["yt_dlp"])
             except yt.Blocked as e:
-                self.errors.append(f"YouTube blocked at {vid}: {e}")
-                log.error("YouTube rate limit / bot check at %s; stopping for today", vid)
-                return
+                # One 429 can be specific to a video (its caption URL). Pause, count it, and only stop the day
+                # after two consecutive blocked videos. A video blocked three times over several runs is parked.
+                blocked_streak += 1
+                n = (row["note"] or "")
+                prior = int(n.split("blocked x")[1].split(";")[0]) if "blocked x" in n else 0
+                if prior + 1 >= 3:
+                    self.state.set_video(vid, "error", note=f"blocked x{prior + 1}; parked: {str(e)[:120]}")
+                    log.warning("video %s blocked %d times; parked", vid, prior + 1)
+                else:
+                    self.state.set_video(vid, "pending", note=f"blocked x{prior + 1}; {str(e)[:120]}")
+                if blocked_streak >= 2:
+                    self.errors.append(f"YouTube blocked at {vid}: {e}")
+                    log.error("YouTube rate limit / bot check on 2 consecutive videos (%s); stopping for today", vid)
+                    return
+                log.warning("YouTube 429 / bot check at %s; pausing 90 s and trying the next video", vid)
+                time.sleep(90)
+                continue
             except yt.NotYetAvailable as e:
                 self.state.set_video(vid, "pending", note=f"not yet available: {str(e)[:120]}")
                 log.info("video %s not yet available; will retry", vid)
@@ -455,6 +470,7 @@ class Indexer:
                 log.error("video %s: %s", vid, e)
                 time.sleep(random.uniform(lo, hi))
                 continue
+            blocked_streak = 0
             if cap is None:
                 self.state.set_video(vid, "no_captions")
                 self.stats["no_captions"] += 1
