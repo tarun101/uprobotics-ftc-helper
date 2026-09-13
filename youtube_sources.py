@@ -2,7 +2,7 @@
 
 Discovery: channel RSS feeds daily, yt-dlp --flat-playlist for backfill.
 Captions: yt-dlp --skip-download, English creator captions preferred over auto captions.
-Output: one Markdown unit per 2-3 minute caption window with a &t= link.
+Output: one Markdown item per 2-3 minute caption window with a &t= link.
 
 Politeness lives in ftc_index.py (one video at a time, random delays, daily cap,
 stop on 429 / bot check). Nothing here downloads video or audio.
@@ -276,12 +276,12 @@ def fmt_ts(s: float) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
-def video_units(cap: Captions, season: str):
-    """Yield (unit_id, key_base, title, body, url, published) per window, as first_sources.Unit."""
-    from first_sources import Unit  # same dataclass keeps one upload path
+def video_items(cap: Captions, season: str):
+    """Yield (item_id, key_base, title, body, url, published) per window, as first_sources.Item."""
+    from first_sources import Item  # same dataclass keeps one upload path
     pub_iso = datetime.strptime(cap.upload_date, "%Y%m%d").strftime("%Y-%m-%d")
     video_url = f"https://www.youtube.com/watch?v={cap.video_id}"
-    units = []
+    items = []
     for w in make_windows(cap.cues, cap.duration):
         start = int(w.start)
         link = f"{video_url}&t={start}s"
@@ -292,6 +292,6 @@ def video_units(cap: Captions, season: str):
                 "Type: video transcript window",
                 "Note: videos are advice and examples, not rules." + (" This video is from an earlier season; rules may have changed." if season != "2026-27" else "")]
         body = "\n".join(head) + "\n---\n\n" + w.text + "\n"
-        units.append(Unit(unit_id=f"video:{cap.video_id}-{start:04d}", source_type="video",
+        items.append(Item(item_id=f"video:{cap.video_id}-{start:04d}", source_type="video",
                           title=f"{cap.title} @ {fmt_ts(w.start)}", body=body, url=link, published=cap.timestamp))
-    return units
+    return items

@@ -31,6 +31,14 @@ youtube:
         title_include: ["FTC", "FIRST Tech"], published_after: 2025-09-01 }
     - { name: Wizards.exe FTC 9794, id: UC988iYaWDOF7Fpv6HqN-wjQ }
 
+# Weekly 30-question retrieval check (tests/run_questions.py --grade), run by `ftc_index.py run` on the reconcile weekday
+# and by `ftc_index.py test`. Below the pass mark it signals the Monitor (<ping URL>/fail) and the run exits non-zero.
+tests:
+  weekly: true
+  endpoint: https://ftc.uprobotics.tech/api
+  fail_ping: true
+  commit: true              # git-commit the results file under tests/results/ (no push)
+
 # Documentation websites (added 2026-09-12). Fetched by our script once a week (reconcile weekday) or with `ftc_index.py web`.
 # AI Search's own website crawler only accepts domains on this Cloudflare account, so these are fetched like the manual.
 web_sources:

@@ -1,0 +1,48 @@
+// Run: node --test tests/worker_links.test.mjs   (checks the Worker's link verification and Sources list)
+import test from "node:test";
+import assert from "node:assert/strict";
+import { withVerifiedLinks, retrievedSources, normUrl } from "../page/src/index.js";
+
+const manual = "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ%20Competition%20Manual%20-%20V1.htm#G202";
+const chunks = [
+  { item: { key: "manual--G202--abcd1234.md" }, text: `# G202 Follow the CIC\nSource: FTC BIOBUZZ Competition Manual V1\nLink: ${manual}\nType: rule\n---\n\n**G202** ...` },
+  { item: { key: "video--abc-0300--9f8e7d6c.md" }, text: "# Game Breakdown — 5:00 to 7:30\nChannel: Brogan M. Pratt\nVideo: https://www.youtube.com/watch?v=abc\nLink (this moment): https://www.youtube.com/watch?v=abc&t=300s\nType: video transcript window\n---\n\nwords" },
+  { item: { key: "manual--G202--abcd1234.md" }, text: "a later chunk of the same item with no header" },
+  { item: { key: "web--gm0-intake--11112222.md" }, text: "no header here either" },
+];
+
+test("keeps links retrieval returned, strips the rest, appends Sources", () => {
+  const raw = `Yes. [Rule G202](${manual}) says so.\nSee also [the archive](https://example.org/made-up) and https://example.org/bare.`;
+  const r = withVerifiedLinks(raw, chunks);
+  assert.equal(r.removed, 2);
+  assert.match(r.text, /\[Rule G202\]\(https:\/\/ftc-resources/);
+  assert.ok(!r.text.includes("example.org"), "invented links are gone");
+  assert.ok(r.text.includes("See also the archive and ."), "label survives as plain text");
+  assert.ok(r.text.includes("**Sources**"));
+  assert.ok(r.text.includes(`- [G202 Follow the CIC](${manual})`));
+  assert.ok(r.text.includes("- [Game Breakdown — 5:00 to 7:30](https://www.youtube.com/watch?v=abc&t=300s)"));
+  assert.equal(r.listed, 2, "header-less items are not listed");
+});
+
+test("percent-encoded and trailing-punctuation forms of the same URL match", () => {
+  const decoded = "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ Competition Manual - V1.htm#G202";
+  assert.equal(normUrl(manual), normUrl(decoded + ")."));
+  const r = withVerifiedLinks(`[G202](${decoded})`, chunks);
+  assert.equal(r.removed, 0);
+});
+
+test("the official hub is always allowed; declines get no Sources list", () => {
+  const r = withVerifiedLinks("The sources don't cover this. See the [Competition Manual](https://ftc-resources.firstinspires.org/ftc/game).", []);
+  assert.equal(r.removed, 0);
+  assert.ok(!r.text.includes("**Sources**"), "nothing retrieved, nothing listed");
+  const d = withVerifiedLinks("Sorry, I can only help with FTC robotics questions.", chunks);
+  assert.ok(!d.text.includes("**Sources**"), "an answer without links is left alone");
+});
+
+test("Sources list caps at five and dedupes by link", () => {
+  const many = Array.from({ length: 8 }, (_, i) => ({ item: { key: `manual--R${i}--x.md` }, text: `# R${i} title\nLink: https://x.org/r#${i}\n---\nbody` }));
+  many.push({ item: { key: "manual--dup--y.md" }, text: "# dup\nLink: https://x.org/r#0\n---\nbody" });
+  assert.equal(retrievedSources(many).length, 8);
+  const r = withVerifiedLinks("[R0](https://x.org/r#0)", many);
+  assert.equal(r.listed, 5);
+});
