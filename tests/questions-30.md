@@ -40,4 +40,4 @@ section before scoring — the manual, not this file, is the authority.
 
 Scoring notes
 - "Correct" means the answer matches the linked source, states version/date for official items, and says "earlier season" for pre-2026-09-01 videos.
-- If fewer than 27 pass with the default model, switch the instance to a Claude model through AI Gateway and re-run.
+- If fewer than 27 pass with the default model, record the score. Switching to a Claude model through AI Gateway adds spend and waits for Tarun's go-ahead after the trials.

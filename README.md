@@ -53,7 +53,7 @@ downloaded; captions only. No logins, cookies, or proxies.
    security add-generic-password -s ftc-index -a cf-api-token -w '<token with AI Search:Edit + AI Search:Run>'
    security add-generic-password -s ftc-index -a monitor-ping-url -w 'https://hc-ping.com/<uuid>'
    ```
-5. Cloudflare AI Search instance `ftc-2026`: hybrid search on; custom metadata `source_type` (text) and
+5. Cloudflare AI Search instance `ftc-2026` (Workers Paid plan, default Workers AI model; no paid model during trials): hybrid search on; custom metadata `source_type` (text) and
    `published` (number); boost by `published` desc; public endpoint on with authorized host
    `https://ftc.uprobotics.tech` and a 60 requests/minute limit; system prompt from `PROMPT.md`.
 6. Dry run to inspect output without uploading anything:
