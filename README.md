@@ -67,11 +67,15 @@ downloaded; captions only. No logins, cookies, or proxies.
    .venv/bin/python ftc_index.py first            # rules content
    .venv/bin/python ftc_index.py backfill          # discover every channel, index up to 150 videos (repeat daily until caught up)
    ```
-8. Schedule:
+8. Schedule (02:00 local time nightly):
    ```bash
    sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
+   cp ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist /Users/Shared/ftc-tools/
+   launchctl bootstrap gui/$(id -u) /Users/Shared/ftc-tools/me.uprobotics.ftc-index.plist
    ```
+   On the Mac mini `launchctl bootstrap` returns "Input/output error" for a plist under `/Volumes/home`, so it is
+   loaded from the boot-volume copy; the `~/Library/LaunchAgents` copy is there for login-time loading. Check with
+   `launchctl print gui/$(id -u)/me.uprobotics.ftc-index`.
 9. Page: `cd page && wrangler deploy` (the endpoint ID and report address are already in `public/index.html`).
    On the Mac mini, npm-downloaded native binaries (esbuild, workerd) are killed on launch, so wrangler lives in
    `/Users/Shared/ftc-tools` (installed with `--ignore-scripts`), runs with `ESBUILD_BINARY_PATH=/opt/homebrew/bin/esbuild`
