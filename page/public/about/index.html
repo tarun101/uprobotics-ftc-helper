@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Chat · UP Robotics FTC Helper</title>
-  <meta name="description" content="Full-screen chat for the UP Robotics FTC Helper: ask a FIRST Tech Challenge 2026-27 BIOBUZZ question and get an answer that links to the exact source.">
-  <meta name="robots" content="noindex">
+  <title>About · UP Robotics FTC Helper</title>
+  <meta name="description" content="A free, community-run helper for the FIRST Tech Challenge 2026-27 BIOBUZZ season. Ask a question and get a short answer that links to the exact rule, Team Update, or video moment. Open source; hosting and development support by UP Robotics.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect x='6' y='6' width='108' height='108' rx='27' fill='%231D2740'/%3E%3Cpath d='M60 24 L92 58 H74 V62 H46 V58 H28 Z' fill='%23F0561D'/%3E%3Crect x='46' y='66' width='28' height='16' rx='5' fill='%23F0561D'/%3E%3Crect x='46' y='88' width='28' height='16' rx='5' fill='%23FFC53D'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
+  <!-- Cloudflare AI Search chat bubble -->
   <script type="module" src="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/assets/v0.0.25/search-snippet.es.js"></script>
   <style>
     /* UP Robotics design tokens — "clubhouse workshop" */
@@ -75,9 +75,10 @@
     .sticker .a { margin: 0; font-size: 15px; }
     .sticker .src { display: block; margin-top: 12px; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
     .examples { display: flex; flex-wrap: wrap; gap: 10px; }
-    .examples button { font-family: var(--font-body); font-size: 14px; padding: 8px 14px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-white); color: var(--up-ink); cursor: pointer; box-shadow: var(--shadow-sticker-sm); transition: transform 120ms var(--ease-snap), box-shadow 120ms var(--ease-snap); }
-    .examples button:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-sticker); }
-    .examples button:active { transform: translate(2px, 2px); box-shadow: none; }
+    .examples .chip { text-decoration: none; display: inline-block; }
+    .examples button, .examples .chip { font-family: var(--font-body); font-size: 14px; padding: 8px 14px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-white); color: var(--up-ink); cursor: pointer; box-shadow: var(--shadow-sticker-sm); transition: transform 120ms var(--ease-snap), box-shadow 120ms var(--ease-snap); }
+    .examples button:hover, .examples .chip:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-sticker); }
+    .examples button:active, .examples .chip:active { transform: translate(2px, 2px); box-shadow: none; }
 
     /* sections */
     .section { padding: 56px 0; }
@@ -126,22 +127,6 @@
       .pill { font-size: 11px; letter-spacing: 0.06em; padding: 6px 10px; }
       .header-links a.plain { display: none; }
     }
-  
-    html, body { height: 100%; }
-    body { display: flex; flex-direction: column; min-height: 100vh; }
-    .site-header { flex: none; }
-    .chat-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background-color: var(--up-paper); background-image: var(--pattern-grid); background-size: 24px 24px; }
-    .chat-note { flex: none; font-size: 13px; color: var(--up-gray-500); text-align: center; padding: 8px 16px; }
-    chat-page-snippet { flex: 1; display: block; min-height: 0; height: calc(100vh - 68px - 34px); --search-snippet-primary-color: #F0561D; --search-snippet-border-radius: 12px; }
-    chat-bubble-snippet { --search-snippet-primary-color: #F0561D; --search-snippet-border-radius: 16px; }
-    .phone-only { display: none; }
-    @media (max-width: 860px) {
-      /* the full-page widget keeps its history sidebar open on phones; use the chat window instead */
-      chat-page-snippet { display: none; }
-      .phone-only { display: block; padding: 32px 24px; }
-      chat-bubble-snippet.phone-only { padding: 0; }
-      .phone-only .sticker { transform: none; }
-    }
   </style>
 </head>
 <body>
@@ -150,36 +135,146 @@
       <a class="brand" href="/">
         <svg viewBox="0 0 120 120" role="img" aria-label="UP Robotics"><rect x="6" y="6" width="108" height="108" rx="27" fill="#1D2740"></rect><path d="M60 24 L92 58 H74 V62 H46 V58 H28 Z" fill="#F0561D"></path><rect x="46" y="66" width="28" height="16" rx="5" fill="#F0561D"></rect><rect x="46" y="88" width="28" height="16" rx="5" fill="#FFC53D"></rect></svg>
         <span class="wordmark"><em>UP</em> ROBOTICS</span>
-        <span class="tool">FTC Helper · Chat</span>
+        <span class="tool">FTC Helper · Learn more</span>
       </a>
       <nav class="header-links">
         <a class="plain" href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub</a>
-        <a class="btn sm secondary" href="/">Overview</a>
+        <a class="plain" href="https://ftcscout.org/" rel="noopener">FTCScout</a>
+        <a class="btn sm" href="/">Ask a question</a>
       </nav>
     </div>
   </header>
-  <main class="chat-wrap">
-    <p class="chat-note">AI answers can be wrong; open the linked source. Don't type personal information. Chat history stays in this browser only. Not affiliated with <em>FIRST</em>®.</p>
-    <chat-page-snippet api-url="https://ftc.uprobotics.tech/api/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite hide-branding theme="light"></chat-page-snippet>
-    <div class="phone-only">
-      <div class="sticker">
-        <p class="q">Chat on a phone</p>
-        <p class="a">On a phone the chat opens as a window. <strong>Tap the orange chat button</strong> in the bottom-right corner to start, or go back to the <a href="/">overview</a>.</p>
+
+  <section class="hero" id="ask">
+    <div class="container">
+      <div class="hero-copy">
+        <div class="hero-pills"><span class="pill">FTC 2026-27 · BIOBUZZ™</span><span class="pill blue">Free · Community-run · Open source</span></div>
+        <h1>Ask the rules. Get the <em>exact</em> source.</h1>
+        <p class="hero-sub">Type a question about this season and get a short answer that links straight to the rule in the Competition Manual, the Team Update that changed it, or the moment in a video that shows it. Free for every team, no accounts, no ads. UP Robotics provides the hosting and development support; the code is open to everyone.</p>
+        <div class="hero-actions">
+          <a class="btn lg" href="/">Open the chat</a>
+          <a class="btn secondary lg" href="#what">What it knows</a>
+        </div>
+        <div class="examples" aria-label="Example questions">
+          <a class="chip" href="/">How tall can the robot be?</a>
+          <a class="chip" href="/">What changed in Team Update 00?</a>
+          <a class="chip" href="/">What counts as STRATEGIC?</a>
+          <a class="chip" href="/">How do I build a mecanum drivetrain?</a>
+        </div>
+        <p class="lede" style="font-size:14px;color:var(--up-gray-500)">The chat is the home page. On a phone it opens as a window in the corner.</p>
+      </div>
+      <div class="hero-side" aria-hidden="true">
+        <div class="sticker tilt-a">
+          <p class="q">Can I warm up my battery before a match?</p>
+          <p class="a">No. Rule E510 says teams may not heat or cool robot parts above or below the venue's temperature to gain an advantage. Heating batteries is one of the listed examples.</p>
+          <span class="src">Competition Manual V1 · E510</span>
+        </div>
+        <div class="sticker tilt-b">
+          <p class="q">How many motors and servos can we use?</p>
+          <p class="a">Up to 8 motors and 8 servos in total, per rule R503.</p>
+          <span class="src">Competition Manual V1 · R503</span>
+        </div>
       </div>
     </div>
-  </main>
-  <chat-bubble-snippet class="phone-only" api-url="https://ftc.uprobotics.tech/api/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite hide-branding theme="light"></chat-bubble-snippet>
+  </section>
+
+  <section class="section" id="what">
+    <div class="container">
+      <p class="kicker">What it knows</p>
+      <h2>Every answer points back to a source you can open</h2>
+      <p class="lede">The helper only answers from these sources, and it tells you which one it used. If the sources don't cover your question, it says so.</p>
+      <div class="grid">
+        <div class="card">
+          <span class="pill blue">Rules</span>
+          <h3>Competition Manual and Team Updates</h3>
+          <p>Every rule in the official BIOBUZZ™ manual, indexed by rule number, plus each Team Update the day it is published. When they disagree, the newest Team Update wins.</p>
+          <div class="links"><a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub →</a></div>
+        </div>
+        <div class="card">
+          <span class="pill">Videos</span>
+          <h3>Team and coach videos</h3>
+          <p>Captions from five FTC channels, split into short windows, so a link opens the video at the moment that answers you. Videos are advice and examples, not rules, and older seasons are labeled.</p>
+          <div class="links"><a href="https://www.youtube.com/@FIRSTTechChallenge" rel="noopener">FIRST® Tech Challenge on YouTube →</a></div>
+        </div>
+        <div class="card">
+          <span class="pill blue">Design and code</span>
+          <h3>Design guides and documentation</h3>
+          <p>Game Manual 0 for mechanisms and strategy, FTC Docs for programming and the control system, and REV's documentation for hubs, motors, and sensors.</p>
+          <div class="links"><a href="https://gm0.org/" rel="noopener">Game Manual 0 →</a><a href="https://ftc-docs.firstinspires.org/" rel="noopener">FTC Docs →</a><a href="https://docs.revrobotics.com/" rel="noopener">REV documentation →</a></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band-sunken">
+    <div class="container section">
+      <p class="kicker">Please read</p>
+      <h2 style="font-size:28px">Three things to know before you ask</h2>
+      <div class="notice" style="margin-top:20px">
+        <ul style="margin-top:0">
+          <li><strong>AI answers can be wrong.</strong> Always open the linked source. At an event, the Head Referee and the printed rules decide, not this page.</li>
+          <li><strong>Don't type personal information.</strong> No names, schools, phone numbers, or addresses. Conversations are not saved.</li>
+          <li><strong>Not affiliated with or endorsed by <em>FIRST</em>®.</strong> <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of <em>FIRST</em>. This is a free, community-run tool. UP Robotics provides the hosting and development support.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="band-dark">
+    <div class="container">
+      <div>
+        <p class="kicker yellow">Free, community-run, open source</p>
+        <h2>Built by coaches for every team, refreshed every night</h2>
+        <p>This helper is free for every FTC team and will stay that way: no accounts, no ads, no paid tier. It started in an FTC team room in Bethesda, MD, where coaches got tired of flipping through a 150-page manual at 9 pm. Every evening it re-reads the official game hub, picks up any new Team Update, and adds the latest videos from the channels students learn from.</p>
+        <p style="margin-top:14px">UP Robotics, an after-school robotics program, provides the hosting and development support. All of the code is public on GitHub under the MIT license, so any team can see exactly how answers are produced, report a problem, or run their own copy: <a href="https://github.com/tarun101/uprobotics-ftc-helper" rel="noopener">github.com/tarun101/uprobotics-ftc-helper</a></p>
+      </div>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><div><strong>Ask</strong> in plain words, like you'd ask a mentor.</div></div>
+        <div class="step"><span class="n">2</span><div><strong>Read</strong> the short answer and the rule number.</div></div>
+        <div class="step"><span class="n">3</span><div><strong>Open the link</strong> and check the exact wording yourself.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <div>
+        <a class="brand" href="https://www.uprobotics.tech/">
+          <svg viewBox="0 0 120 120" role="img" aria-label="UP Robotics"><rect x="6" y="6" width="108" height="108" rx="27" fill="#F5F2E9"></rect><path d="M60 24 L92 58 H74 V62 H46 V58 H28 Z" fill="#F0561D"></path><rect x="46" y="66" width="28" height="16" rx="5" fill="#F0561D"></rect><rect x="46" y="88" width="28" height="16" rx="5" fill="#FFC53D"></rect></svg>
+          <span class="wordmark" style="color:#F5F2E9"><em>UP</em> ROBOTICS</span>
+        </a>
+        <p class="legal">The FTC Helper is a free, community-run tool for FIRST® Tech Challenge teams. UP Robotics, an after-school robotics, coding, and STEM program for kids in grades K–12 in downtown Bethesda, MD, provides the hosting and development support. The code is open source under the MIT license. Not affiliated with or endorsed by <em>FIRST</em>®. <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of <em>FIRST</em>. Manual text and video captions belong to their authors and are indexed only to link you back to them. Design guidance comes from <a href="https://gm0.org/" rel="noopener">Game Manual 0</a>, shared by its authors under CC BY-NC 2.0, and from FTC Docs and REV Robotics documentation.</p>
+      </div>
+      <div>
+        <h4>Sources</h4>
+        <p><a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub</a></p>
+        <p><a href="https://ftcscout.org/" rel="noopener">FTCScout</a></p>
+        <p><a href="https://gm0.org/" rel="noopener">Game Manual 0</a></p>
+        <p><a href="https://ftc-docs.firstinspires.org/" rel="noopener">FTC Docs</a></p>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <p><a href="mailto:tarun@uprobotics.tech?subject=FTC%20Helper%20problem">Report a problem</a></p>
+        <p><a href="https://www.uprobotics.tech/" rel="noopener">uprobotics.tech</a></p>
+        <p><a href="https://github.com/tarun101/uprobotics-ftc-helper" rel="noopener">Source code (MIT license)</a></p>
+      </div>
+    </div>
+  </footer>
+
+  <chat-bubble-snippet api-url="https://ftc.uprobotics.tech/api/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite hide-branding theme="light"></chat-bubble-snippet>
+
   <script>
-    // On phones, open the chat window right away.
-    if (window.matchMedia('(max-width: 860px)').matches) {
-      var tries = 0;
-      var t = setInterval(function () {
-        var el = document.querySelector('chat-bubble-snippet');
-        var btn = el && el.shadowRoot && el.shadowRoot.querySelector('button');
-        if (btn) { try { btn.click(); } catch (e) {} clearInterval(t); }
-        if (++tries > 40) clearInterval(t);
-      }, 250);
+    // "Ask a question" buttons open the chat bubble when the widget exposes its toggle; otherwise they just scroll to the top.
+    function openChat() {
+      var el = document.querySelector('chat-bubble-snippet');
+      var root = el && el.shadowRoot;
+      var toggle = root && (root.querySelector('button[aria-label*="chat" i], button[aria-label*="open" i], .chat-bubble-toggle, button'));
+      if (toggle) { try { toggle.click(); return true; } catch (e) {} }
+      return false;
     }
+    document.querySelectorAll('[data-open-chat]').forEach(function (b) {
+      b.addEventListener('click', function (e) { if (openChat()) { e.preventDefault(); } });
+    });
   </script>
 </body>
 </html>

@@ -39,7 +39,7 @@ downloaded; captions only. No logins, cookies, or proxies.
 | `first_sources.py` | Manual splitter (rule anchors + headings), Team Update PDFs, hub, Q&A archive |
 | `youtube_sources.py` | RSS / flat-playlist discovery, yt-dlp captions, 2–3 minute windows, season labels |
 | `config.yaml` | Channels and filters, instance name, paths (no secrets) |
-| `page/` | `ftc.uprobotics.tech`: static pages (AI Search UI snippets) + `src/index.js`, the API Worker the widgets call (AI Search, Workers AI, and rate-limit bindings in `wrangler.jsonc`) |
+| `page/` | `ftc.uprobotics.tech`: `/` is the chat, `/about/` the overview (AI Search UI snippets; `/chat/` redirects to `/`) + `src/index.js`, the API Worker the widgets call (AI Search, Workers AI, and rate-limit bindings in `wrangler.jsonc`) |
 | `launchd/` | launchd plist template for the 23:00 / 02:00 / 05:00 runs |
 | `tests/` | 30-question test and bad-question list used for acceptance |
 
