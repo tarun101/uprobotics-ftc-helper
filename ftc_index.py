@@ -329,6 +329,10 @@ class Indexer:
                 msg = failed[item_id].get("error") or "indexing error"
                 self.errors.append(f"index error {key}: {msg}")
                 log.error("index error %s: %s", key, msg)
+                try:
+                    self.cf.delete(item_id)            # drop the failed copy so the retry does not duplicate the key
+                except Exception as e:
+                    log.warning("could not delete failed item %s: %s", key, e)
                 if self.state:
                     self.state.delete_unit(unit_id)   # forces a re-upload next run
         if self.state:
