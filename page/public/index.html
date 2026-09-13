@@ -52,7 +52,7 @@
     .btn.secondary:hover { background: var(--up-paper-2); color: var(--up-ink); }
     .btn.lg { font-size: 18px; padding: 16px 26px; }
     .btn.sm { font-size: 14px; padding: 10px 16px; box-shadow: var(--shadow-sticker-sm); }
-    .pill { display: inline-block; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; padding: 6px 12px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-yellow-400); color: var(--up-ink); box-shadow: var(--shadow-sticker-sm); }
+    .pill { display: inline-block; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; padding: 6px 12px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-yellow-400); color: var(--up-ink); box-shadow: var(--shadow-sticker-sm); }
     .pill.blue { background: var(--up-blue-100); }
     .pill.ink { background: var(--up-ink); color: #F5F2E9; }
     .kicker { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--up-blue-700); margin: 0 0 8px; }
@@ -122,6 +122,7 @@
       .band-dark .container { grid-template-columns: 1fr; }
       footer .container { grid-template-columns: 1fr; }
       .brand .tool { display: none; }
+      .pill { font-size: 11px; letter-spacing: 0.06em; padding: 6px 10px; }
       .header-links a.plain { display: none; }
     }
   </style>
