@@ -167,7 +167,7 @@ def fetch_captions(video_id: str, workdir: Path, yt_dlp: str = YT_DLP) -> Captio
         meta_path.unlink()
     fields = "%(.{id,title,channel,channel_id,upload_date,timestamp,duration,live_status,subtitles,requested_subtitles})j"
     cmd = [yt_dlp, "--no-simulate", "--skip-download", "--no-playlist", "--no-warnings",
-           "--write-subs", "--write-auto-subs", "--sub-langs", "en.*", "--sub-format", "json3/vtt/best",
+           "--write-subs", "--write-auto-subs", "--sub-langs", "en", "--sub-format", "json3/vtt/best",   # one file: creator "en" if it exists, else auto "en"
            "-o", str(workdir / "%(id)s.%(ext)s"), "--print-to-file", fields, str(meta_path),
            f"https://www.youtube.com/watch?v={video_id}"]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)

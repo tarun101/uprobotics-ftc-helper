@@ -93,8 +93,8 @@ then deletes the old key. A weekly reconcile compares the instance's item list w
 
 ## YouTube politeness
 
-One video at a time, 5–15 s random delay, at most 150 videos per day, stop for the day on HTTP 429 or a bot
-check. Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
+One video at a time, one caption file per video, 10–25 s random delay, at most 150 videos per run, stop for the day on
+HTTP 429 or a bot check. Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
 they have ended.
 
 ## License
