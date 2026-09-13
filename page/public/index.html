@@ -25,9 +25,8 @@
     .links a { display: inline-block; margin: 6px 12px 0 0; color: var(--accent); font-weight: 600; text-decoration: none; }
     .links a:hover { text-decoration: underline; }
     footer { margin-top: 32px; font-size: 0.85rem; color: var(--muted); }
-    chat-page-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
+    chat-bubble-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
     .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-    chat-page-snippet { display: block; height: 520px; max-height: 70vh; }
     .examples span { font-size: 0.85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); }
   </style>
 </head>
@@ -45,7 +44,7 @@
         <span>What is a STRATEGIC violation?</span>
         <span>How do I build a mecanum drivetrain?</span>
       </div>
-      <chat-page-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite></chat-page-snippet>
+      <p style="margin:0"><strong>Tap the orange chat button in the bottom-right corner</strong> and ask. Answers come with a link to the exact rule, Team Update, or video moment.</p>
     </div>
 
     <div class="card notice">
