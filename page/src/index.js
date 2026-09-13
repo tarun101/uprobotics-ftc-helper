@@ -121,14 +121,14 @@ async function retrieve(env, query) {
 
 async function generate(env, messages, query, chunks) {
   const context = chunks.length
-    ? chunks.map((c, i) => `[Source ${i + 1}] (${(c.item && c.item.key) || "unknown"})\n${c.text}`).join("\n\n---\n\n")
+    ? chunks.map((c) => c.text).join("\n\n=====\n\n")
     : "(no sources matched)";
   const history = (Array.isArray(messages) ? messages : [])
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-6, -1);
   const result = await env.AI.run(MODEL, {
     messages: [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\nRetrieved sources (use only these; the header lines of each source give its type, version or date, and link):\n\n${context}` },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\nRetrieved sources, separated by =====. Use only these. Each begins with header lines giving its title, type, version or date, and Link. Label links with the source's title or rule number, never with words like "Source 3":\n\n${context}` },
       ...history,
       { role: "user", content: query },
     ],
