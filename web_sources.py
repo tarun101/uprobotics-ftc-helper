@@ -1,7 +1,7 @@
 """Documentation websites for the UP Robotics FTC Helper (added 2026-09-12 at Tarun's request).
 
 Each configured site is fetched page by page (politely, 1 request/second), the main content is
-converted to Markdown, and each page becomes one unit. Discovery:
+converted to Markdown, and each page becomes one item. Discovery:
   * kind "sphinx":  read <base>/searchindex.js (Read the Docs / Sphinx sites) for the page list
   * kind "sitemap": read a sitemap index and the sub-sitemaps whose URL contains one of `include_sitemaps`
 Nothing here follows links beyond the configured site; robots.txt allows crawling on all three sites.
@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from first_sources import USER_AGENT, Unit, norm
+from first_sources import USER_AGENT, Item, norm
 
 log = logging.getLogger("ftc-index.web")
 
@@ -236,12 +236,12 @@ def clean_gitbook_markdown(text: str) -> str:
     text = re.sub(r"<table[^>]*>(.*?)</table>", lambda m: "\n".join("- " + norm(re.sub(r"<[^>]+>", " ", row)) for row in re.findall(r"<tr>(.*?)</tr>", m.group(1), re.S) if norm(re.sub(r"<[^>]+>", " ", row))), text, flags=re.S)
     text = re.sub(r"<figure>.*?</figure>", "", text, flags=re.S)
     text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"^# .*\n", "", text.strip(), count=1)     # page title is already in the unit header
+    text = re.sub(r"^# .*\n", "", text.strip(), count=1)     # page title is already in the item header
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-# --------------------------------------------------------------------------- units
+# --------------------------------------------------------------------------- items
 
 def slug(url: str, base: str) -> str:
     path = url[len(base):] if url.startswith(base) else urlparse(url).path
@@ -250,9 +250,9 @@ def slug(url: str, base: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", path).strip("-")[:80]
 
 
-def fetch_units(src: WebSource, session: requests.Session, default_published: int) -> list[Unit]:
+def fetch_items(src: WebSource, session: requests.Session, default_published: int) -> list[Item]:
     pages = discover(src, session)
-    units: list[Unit] = []
+    items: list[Item] = []
     failures = 0
     for i, page in enumerate(pages):
         try:
@@ -287,7 +287,7 @@ def fetch_units(src: WebSource, session: requests.Session, default_published: in
         body = "\n".join(head) + "\n---\n\n" + md + "\n"
         if len(body.encode("utf-8")) > 3_500_000:
             body = body.encode("utf-8")[:3_500_000].decode("utf-8", errors="ignore")
-        units.append(Unit(unit_id=f"web:{src.id}:{slug(page.url, src.base)}", source_type=src.source_type, title=title,
+        items.append(Item(item_id=f"web:{src.id}:{slug(page.url, src.base)}", source_type=src.source_type, title=title,
                           body=body, url=link, published=page.lastmod or default_published))
-    log.info("%s: %d units from %d pages (%d fetch failures)", src.id, len(units), len(pages), failures)
-    return units
+    log.info("%s: %d items from %d pages (%d fetch failures)", src.id, len(items), len(pages), failures)
+    return items

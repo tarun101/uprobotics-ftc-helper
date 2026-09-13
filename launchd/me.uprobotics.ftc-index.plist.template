@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- FTC index refresh at 23:00, 02:00 and 05:00 local time (America/New_York on the Mac mini; Tarun ruling 2026-09-12: three off-hours runs while the YouTube backlog drains; the run lock skips an overlap).
+  <!-- FTC index refresh at 23:00 and 05:00 local time (America/New_York on the Mac mini; Tarun ruling 2026-09-13: two runs so a Team
+       Update posted in the evening is indexed before school; the run lock skips an overlap). Set the Healthchecks.io check to
+       a 1-day period with a 12-hour grace so either run keeps it green.
        Install: sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template \
                   > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
                 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist -->
@@ -16,7 +18,6 @@
   <key>WorkingDirectory</key><string>__REPO__</string>
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
   </array>

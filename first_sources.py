@@ -3,10 +3,10 @@
 Fetches only URLs under https://ftc-resources.firstinspires.org/ftc/game and
 turns them into small Markdown documents ("units"):
 
-  * the HTML Competition Manual -> one unit per rule, one per heading section
-  * Team Update PDFs            -> one unit per Team Update
-  * the season hub page         -> one unit
-  * the public Q&A archive      -> one unit per question when FIRST publishes it
+  * the HTML Competition Manual -> one item per rule, one per heading section
+  * Team Update PDFs            -> one item per Team Update
+  * the season hub page         -> one item
+  * the official Q&A system      -> one item per answered question, from its public RSS feed (never logs in)
 
 Nothing here talks to Cloudflare or touches state; see ftc_index.py.
 """
@@ -28,6 +28,9 @@ log = logging.getLogger("ftc-index.first")
 HOST = "ftc-resources.firstinspires.org"
 GAME_PATH = "/ftc/game"
 HUB_URL = f"https://{HOST}{GAME_PATH}"
+QA_HOST = "ftc-qa.firstinspires.org"                       # readable without login; asking needs a Lead Coach login we never use
+QA_RSS_URL = f"https://{QA_HOST}/rss/answers.rss"
+QA_ONEPAGE_URL = f"https://{QA_HOST}/onepage.html"
 USER_AGENT = "UPRoboticsFTCHelper/1.0 (+https://ftc.uprobotics.tech; community tool, not affiliated with FIRST)"
 
 RULE_ID_RE = re.compile(r"^[A-Z]{1,2}\d{3}$")
@@ -47,9 +50,9 @@ class SourceError(RuntimeError):
 
 
 @dataclass
-class Unit:
+class Item:
     """One Markdown document to index."""
-    unit_id: str          # stable identity, e.g. "manual:G202", "tu:00", "hub", "qa:Q12"
+    item_id: str          # stable identity, e.g. "manual:G202", "tu:00", "hub", "qa:Q12"
     source_type: str      # manual | team_update | qa | hub
     title: str
     body: str             # full Markdown including header
@@ -62,7 +65,7 @@ class Unit:
 
     @property
     def key(self) -> str:
-        kind, _, ident = self.unit_id.partition(":")
+        kind, _, ident = self.item_id.partition(":")
         ident = ident or kind
         ident = re.sub(r"[^A-Za-z0-9._-]+", "-", ident).strip("-") or "x"
         return f"{kind}--{ident}--{self.hash8}.md"[:128]
@@ -107,8 +110,13 @@ class HubInfo:
 # --------------------------------------------------------------------------- fetch
 
 def allowed(url: str) -> bool:
+    """Only the game hub tree and the public Q&A site are ever fetched."""
     p = urlparse(url)
-    return p.scheme == "https" and p.netloc == HOST and (p.path == GAME_PATH or p.path.startswith(GAME_PATH + "/"))
+    if p.scheme != "https":
+        return False
+    if p.netloc == QA_HOST:
+        return True
+    return p.netloc == HOST and (p.path == GAME_PATH or p.path.startswith(GAME_PATH + "/"))
 
 
 def make_session() -> requests.Session:
@@ -118,13 +126,13 @@ def make_session() -> requests.Session:
 
 
 def fetch(session: requests.Session, url: str) -> requests.Response:
-    """GET a URL under /ftc/game/, following redirects that stay under it."""
+    """GET an allowed URL (see allowed()), following redirects that stay allowed."""
     if not allowed(url):
-        raise SourceError(f"refusing to fetch outside {HUB_URL}: {url}")
+        raise SourceError(f"refusing to fetch outside {HUB_URL} / {QA_HOST}: {url}")
     log.debug("GET %s", url)
     r = session.get(url, timeout=90, allow_redirects=True)
     if not allowed(r.url):
-        raise SourceError(f"redirect left {HUB_URL}: {url} -> {r.url}")
+        raise SourceError(f"redirect left the allowed hosts: {url} -> {r.url}")
     if r.status_code != 200:
         raise SourceError(f"HTTP {r.status_code} for {url}")
     return r
@@ -194,8 +202,8 @@ def parse_hub(html: str, base_url: str = HUB_URL) -> HubInfo:
     return info
 
 
-def hub_units(info: HubInfo, url: str = HUB_URL) -> list[Unit]:
-    """Two small units: current versions/Team Updates, and the hub's list of official resource links."""
+def hub_items(info: HubInfo, url: str = HUB_URL) -> list[Item]:
+    """Two small items: current versions/Team Updates, and the hub's list of official resource links."""
     manual = info.find("/cm-html")
     published = parse_hub_date(manual.updated if manual else None)
     lines = [f"# {info.season_title} — current versions and Team Updates", "Source: official FIRST Tech Challenge game hub",
@@ -218,7 +226,7 @@ def hub_units(info: HubInfo, url: str = HUB_URL) -> list[Unit]:
         ver = f" — Version {e.version}" if e.version else ""
         upd = f" (updated {e.updated})" if e.updated else ""
         lines.append(f"- {e.title}{ver}{upd}: {e.url}")
-    units = [Unit(unit_id="hub", source_type="hub", title=info.season_title, body="\n".join(lines) + "\n", url=url, published=published)]
+    items = [Item(item_id="hub", source_type="hub", title=info.season_title, body="\n".join(lines) + "\n", url=url, published=published)]
 
     ext = [e for e in info.entries if e.external]
     if ext:
@@ -229,8 +237,8 @@ def hub_units(info: HubInfo, url: str = HUB_URL) -> list[Unit]:
              "Field drawings, CAD, and the field setup guide are under Playing Field Resources.", ""]
         for e in ext:
             r.append(f"- {e.title}: {e.url}")
-        units.append(Unit(unit_id="hub:resources", source_type="hub", title="Official FTC resources", body="\n".join(r) + "\n", url=url, published=published))
-    return units
+        items.append(Item(item_id="hub:resources", source_type="hub", title="Official FTC resources", body="\n".join(r) + "\n", url=url, published=published))
+    return items
 
 
 # --------------------------------------------------------------------------- manual
@@ -363,15 +371,15 @@ def _section_id(number: str | None, title: str, used: set[str]) -> str:
     return sid
 
 
-def manual_units(html: str, html_url: str, version: str, updated: str | None) -> list[Unit]:
-    """Split the Word-exported HTML manual into rule units and section units."""
+def manual_items(html: str, html_url: str, version: str, updated: str | None) -> list[Item]:
+    """Split the Word-exported HTML manual into rule items and section items."""
     soup = BeautifulSoup(html, "lxml")
     blocks = manual_blocks(soup)
     published = parse_hub_date(updated)
     updated_txt = updated or "date not listed"
     manual_label = f"FTC BIOBUZZ Competition Manual {version} (updated {updated_txt})"
 
-    units: list[Unit] = []
+    items: list[Item] = []
     used_ids: set[str] = set()
     path: list[tuple[int, str]] = []     # (level, "10.1 MATCH Overview")
     cur_kind: str | None = None          # "section" | "rule"
@@ -391,7 +399,7 @@ def manual_units(html: str, html_url: str, version: str, updated: str | None) ->
                 rid = cur_meta["rule_id"]
                 head = [f"# {rid} {cur_meta['title']}", f"Source: {manual_label}", f"Section: {cur_meta['crumbs']}",
                         f"Link: {html_url}#{rid}", "Type: rule"]
-                units.append(Unit(unit_id=f"manual:{rid}", source_type="manual", title=f"{rid} {cur_meta['title']}",
+                items.append(Item(item_id=f"manual:{rid}", source_type="manual", title=f"{rid} {cur_meta['title']}",
                                   body="\n".join(head) + "\n---\n\n" + content + "\n", url=f"{html_url}#{rid}", published=published))
             else:
                 sid = cur_meta["sid"]
@@ -399,7 +407,7 @@ def manual_units(html: str, html_url: str, version: str, updated: str | None) ->
                 link = f"{html_url}#{anchor}" if anchor else html_url
                 head = [f"# {cur_meta['heading']}", f"Source: {manual_label}", f"Section: {cur_meta['crumbs']}",
                         f"Link: {link}", "Type: manual section"]
-                units.append(Unit(unit_id=f"manual:sec-{sid}", source_type="manual", title=cur_meta["heading"],
+                items.append(Item(item_id=f"manual:sec-{sid}", source_type="manual", title=cur_meta["heading"],
                                   body="\n".join(head) + "\n---\n\n" + content + "\n", url=link, published=published))
         cur_kind, cur_lines, cur_meta = None, [], {}
 
@@ -426,11 +434,11 @@ def manual_units(html: str, html_url: str, version: str, updated: str | None) ->
                 cur_kind, cur_meta = "section", {"sid": _section_id(None, "untitled", used_ids), "heading": "Untitled", "crumbs": crumbs(), "anchor": None}
             cur_lines.append(b.md)
     flush()
-    return units
+    return items
 
 
-def fetch_manual(session: requests.Session, hub: HubInfo) -> tuple[list[Unit], str, str]:
-    """Returns (units, html_url, version)."""
+def fetch_manual(session: requests.Session, hub: HubInfo) -> tuple[list[Item], str, str]:
+    """Returns (items, html_url, version)."""
     entry = hub.find("/cm-html")
     r = fetch(session, f"{HUB_URL}/cm-html")
     html_url = r.url
@@ -438,12 +446,12 @@ def fetch_manual(session: requests.Session, hub: HubInfo) -> tuple[list[Unit], s
     m = re.search(r"-\s*(V[\d.]+)\.htm", fname, re.I)
     version = (entry.version if entry and entry.version else None) or (m.group(1) if m else "unknown version")
     html = r.content.decode("windows-1252", errors="replace")
-    units = manual_units(html, html_url, version, entry.updated if entry else None)
-    rules = sum(1 for u in units if not u.unit_id.startswith("manual:sec-"))
-    log.info("manual %s: %d rule units, %d section units (%s)", version, rules, len(units) - rules, fname)
+    items = manual_items(html, html_url, version, entry.updated if entry else None)
+    rules = sum(1 for u in items if not u.item_id.startswith("manual:sec-"))
+    log.info("manual %s: %d rule items, %d section items (%s)", version, rules, len(items) - rules, fname)
     if rules < 50:
         raise SourceError(f"manual parse found only {rules} rules; layout probably changed")
-    return units, html_url, version
+    return items, html_url, version
 
 
 # --------------------------------------------------------------------------- PDFs (Team Updates, Q&A)
@@ -473,8 +481,8 @@ def pdf_text(data: bytes) -> str:
     return text.strip()
 
 
-def team_update_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
-    units = []
+def team_update_items(session: requests.Session, hub: HubInfo) -> list[Item]:
+    items = []
     for e in hub.team_updates:
         num = re.search(r"/tu-(\d+)$", urlparse(e.url).path).group(1)
         r = fetch(session, e.url)
@@ -487,14 +495,72 @@ def team_update_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
         head = [f"# Team Update {num} ({date})", f"Source: FIRST Tech Challenge Team Update {e.version or 'TU' + num}, {date}",
                 f"Link: {e.url}", "Type: team update",
                 "Note: Team Updates change or clarify the Competition Manual. The most recent Team Update wins over older manual text."]
-        units.append(Unit(unit_id=f"team_update:{num}", source_type="team_update", title=f"Team Update {num}",
+        items.append(Item(item_id=f"team_update:{num}", source_type="team_update", title=f"Team Update {num}",
                           body="\n".join(head) + "\n---\n\n" + text + "\n", url=e.url, published=parse_hub_date(e.updated)))
-    log.info("team updates: %d", len(units))
-    return units
+    log.info("team updates: %d", len(items))
+    return items
 
 
-def qa_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
-    """Index the public Q&A archive if the hub links one under /ftc/game/. Never logs in."""
+def qa_id(link: str, fallback: str) -> str:
+    """'https://ftc-qa.firstinspires.org/qa/123' -> '123'; otherwise a slug of the guid/title."""
+    path = urlparse(link or "").path.rstrip("/")
+    m = re.search(r"/qa/([^/]+)$", path)
+    raw = m.group(1) if m else (fallback or "")
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")[:40] or hashlib.sha256((link or fallback).encode()).hexdigest()[:10]
+
+
+def html_to_text(html: str) -> str:
+    """Feed entry HTML -> plain paragraphs (keeps line breaks between blocks)."""
+    if not html:
+        return ""
+    if "<" not in html:
+        return norm(html)
+    soup = BeautifulSoup(html, "lxml")
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    text = soup.get_text("\n")
+    lines = [norm(l) for l in text.split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(l for l in lines if l)).strip()
+
+
+def qa_items(session: requests.Session) -> list[Item]:
+    """One item per answered question from the official Q&A system's public RSS feed.
+
+    The feed is empty until the season's Q&A opens (2026-09-28 for BIOBUZZ) and resets each season.
+    An unreadable feed raises; an empty one returns [] (the caller decides whether that is suspicious)."""
+    import calendar
+    import feedparser
+    r = fetch(session, QA_RSS_URL)
+    feed = feedparser.parse(r.content)
+    if feed.bozo and not feed.entries:
+        raise SourceError(f"Q&A feed unreadable: {getattr(feed, 'bozo_exception', 'parse error')}")
+    items: list[Item] = []
+    for e in feed.entries:
+        link = (e.get("link") or "").strip()
+        qid = qa_id(link, e.get("id") or e.get("title") or "")
+        title = norm(e.get("title") or "") or f"Q&A {qid}"
+        html = ""
+        if e.get("content"):
+            html = e["content"][0].get("value") or ""
+        html = html or e.get("summary") or e.get("description") or ""
+        text = html_to_text(html)
+        when = e.get("published_parsed") or e.get("updated_parsed")
+        published = calendar.timegm(when) if when else int(datetime.now(timezone.utc).timestamp())
+        date_txt = datetime.fromtimestamp(published, timezone.utc).strftime("%b %d, %Y") if when else "date not listed"
+        url = link if allowed(link) else QA_ONEPAGE_URL
+        head = [f"# Q&A {qid}: {title}", f"Source: FIRST Tech Challenge official Q&A, answered {date_txt}", f"Link: {url}", "Type: Q&A",
+                "Note: official Q&A answers clarify the Competition Manual; the newest answer wins over older manual text."]
+        if len(text) < 20:
+            log.warning("Q&A %s has no answer text in the feed; indexing the title only", qid)
+            text = title
+        items.append(Item(item_id=f"qa:{qid}", source_type="qa", title=f"Q&A {qid}: {title}",
+                          body="\n".join(head) + "\n---\n\n" + text + "\n", url=url, published=published))
+    log.info("Q&A feed: %d answered questions", len(items))
+    return items
+
+
+def qa_archive_items(session: requests.Session, hub: HubInfo) -> list[Item]:
+    """Fallback: index a Q&A archive the hub links under /ftc/game/, if FIRST ever publishes one there."""
     e = hub.qa_archive
     if not e:
         log.info("Q&A archive: not linked on the hub yet")
@@ -504,7 +570,7 @@ def qa_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
     published = parse_hub_date(e.updated)
     head = lambda title, link: [f"# {title}", f"Source: FIRST Tech Challenge official Q&A ({e.updated or 'date not listed'})", f"Link: {link}", "Type: Q&A",
                                 "Note: official Q&A answers clarify the manual; the newest answer wins."]
-    units: list[Unit] = []
+    items: list[Item] = []
     if "html" in ctype:
         soup = BeautifulSoup(html_text(r), "lxml")
         heads = soup.find_all(["h2", "h3", "h4"])
@@ -522,11 +588,11 @@ def qa_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
                 qid = re.sub(r"[^A-Za-z0-9]+", "-", title)[:40].strip("-") or f"q{i}"
                 anchor = h.get("id") or next((a.get("name") for a in h.find_all("a", attrs={"name": True})), None)
                 link = f"{e.url}#{anchor}" if anchor else e.url
-                units.append(Unit(unit_id=f"qa:{qid}", source_type="qa", title=title,
+                items.append(Item(item_id=f"qa:{qid}", source_type="qa", title=title,
                                   body="\n".join(head(title, link)) + "\n---\n\n" + content + "\n", url=link, published=published))
-        if not units:
+        if not items:
             text = norm(soup.get_text("\n"))
-            units.append(Unit(unit_id="qa:archive", source_type="qa", title="Q&A archive",
+            items.append(Item(item_id="qa:archive", source_type="qa", title="Q&A archive",
                               body="\n".join(head("Q&A archive", e.url)) + "\n---\n\n" + text + "\n", url=e.url, published=published))
     else:
         text = pdf_text(r.content)
@@ -537,23 +603,32 @@ def qa_units(session: requests.Session, hub: HubInfo) -> list[Unit]:
                 continue
             m = re.match(r"(Q\d+)\b", c)
             qid = m.group(1) if m else f"part{i}"
-            units.append(Unit(unit_id=f"qa:{qid}", source_type="qa", title=f"Q&A {qid}",
+            items.append(Item(item_id=f"qa:{qid}", source_type="qa", title=f"Q&A {qid}",
                               body="\n".join(head(f"Q&A {qid}", e.url)) + "\n---\n\n" + c + "\n", url=e.url, published=published))
-    log.info("Q&A archive: %d units", len(units))
-    return units
+    log.info("Q&A archive: %d items", len(items))
+    return items
 
 
 # --------------------------------------------------------------------------- all together
 
-def collect_first(session: requests.Session | None = None) -> list[Unit]:
+def collect_first(session: requests.Session | None = None) -> tuple[list[Item], HubInfo]:
+    """Hub, manual, and Team Update items. Q&A is collected separately (collect_qa) so a feed outage
+    cannot block a manual refresh or delete the Q&A items already indexed."""
     session = session or make_session()
     hub_html = html_text(fetch(session, HUB_URL))
     hub = parse_hub(hub_html)
     if not hub.find("/cm-html"):
         raise SourceError("hub page has no Competition Manual HTML link; layout changed?")
-    units: list[Unit] = hub_units(hub)
+    items: list[Item] = hub_items(hub)
     manual, _, _ = fetch_manual(session, hub)
-    units += manual
-    units += team_update_units(session, hub)
-    units += qa_units(session, hub)
-    return units
+    items += manual
+    items += team_update_items(session, hub)
+    return items, hub
+
+
+def collect_qa(session: requests.Session, hub: HubInfo) -> list[Item]:
+    """Q&A items from the public RSS feed; if the feed has nothing and the hub links an archive, use that."""
+    items = qa_items(session)
+    if not items and hub.qa_archive:
+        items = qa_archive_items(session, hub)
+    return items

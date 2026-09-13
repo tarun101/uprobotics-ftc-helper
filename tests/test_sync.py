@@ -37,8 +37,8 @@ class FakeCF:
         return self.items[item_id]
 
 
-def unit(uid, body, st="manual"):
-    return fs.Unit(unit_id=uid, source_type=st, title=uid, body=body, url="u", published=1)
+def item(uid, body, st="manual"):
+    return fs.Item(item_id=uid, source_type=st, title=uid, body=body, url="u", published=1)
 
 
 class SyncTest(unittest.TestCase):
@@ -52,15 +52,15 @@ class SyncTest(unittest.TestCase):
         return fi.Indexer(self.cfg, self.state, self.cf, run_id)
 
     def test_unchanged_changed_stale(self):
-        a, b = unit("manual:G1", "one"), unit("manual:G2", "two")
-        ix = self.ix("r1"); ix.sync_units([a, b], {"manual"})
+        a, b = item("manual:G1", "one"), item("manual:G2", "two")
+        ix = self.ix("r1"); ix.sync_items([a, b], {"manual"})
         self.assertEqual(ix.stats["uploaded"], 2)
         # nothing changed -> nothing uploaded
-        ix = self.ix("r2"); ix.sync_units([a, b], {"manual"})
+        ix = self.ix("r2"); ix.sync_items([a, b], {"manual"})
         self.assertEqual((ix.stats["uploaded"], ix.stats["unchanged"], ix.stats["deleted"]), (0, 2, 0))
         # G1 changed -> new key uploaded, old deleted; G2 gone -> deleted
-        a2 = unit("manual:G1", "one changed")
-        ix = self.ix("r3"); ix.sync_units([a2], {"manual"})
+        a2 = item("manual:G1", "one changed")
+        ix = self.ix("r3"); ix.sync_items([a2], {"manual"})
         self.assertEqual((ix.stats["uploaded"], ix.stats["deleted"]), (1, 1))   # stale G2 gone; old G1 waits
         self.assertEqual(len(self.state.pending_deletes()), 1)
         ix.finalize()
@@ -71,11 +71,11 @@ class SyncTest(unittest.TestCase):
         self.assertTrue(a2.key.startswith("manual--G1--") and a2.key != a.key)
 
     def test_video_units_not_deleted_by_first_sync(self):
-        v = unit("video:abc-0000", "hello", "video")
-        ix = self.ix("r1"); ix.sync_units([v])
-        ix = self.ix("r2"); ix.sync_units([unit("manual:G1", "x")], {"manual"})
+        v = item("video:abc-0000", "hello", "video")
+        ix = self.ix("r1"); ix.sync_items([v])
+        ix = self.ix("r2"); ix.sync_items([item("manual:G1", "x")], {"manual"})
         self.assertEqual(ix.stats["deleted"], 0)
-        self.assertIsNotNone(self.state.unit("video:abc-0000"))
+        self.assertIsNotNone(self.state.item("video:abc-0000"))
 
     def test_windows_and_season(self):
         cues = [yt.Cue(t, f"w{t}") for t in range(0, 600, 5)]
@@ -88,9 +88,9 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(yt.season_label("20251015", d.date(2026, 9, 1), "2026-27"), "2025-26")
 
     def test_key_format(self):
-        self.assertRegex(unit("manual:sec-10.3.1", "x").key, r"^manual--sec-10\.3\.1--[0-9a-f]{8}\.md$")
-        self.assertRegex(unit("video:AbC_-9-0300", "x", "video").key, r"^video--AbC_-9-0300--[0-9a-f]{8}\.md$")
-        self.assertTrue(fi.KEY_RE.match(unit("team_update:00", "x", "team_update").key))
+        self.assertRegex(item("manual:sec-10.3.1", "x").key, r"^manual--sec-10\.3\.1--[0-9a-f]{8}\.md$")
+        self.assertRegex(item("video:AbC_-9-0300", "x", "video").key, r"^video--AbC_-9-0300--[0-9a-f]{8}\.md$")
+        self.assertTrue(fi.KEY_RE.match(item("team_update:00", "x", "team_update").key))
 
 
 if __name__ == "__main__":

@@ -8,10 +8,11 @@ Commands
   backfill     flat-playlist discovery for every channel, then process pending videos
   web          fetch the documentation websites in config.yaml (gm0, FTC Docs, REV docs) and index them
   reconcile    compare the instance's items with local state and repair
+  test         run the 30-question retrieval check against the live API (also runs weekly inside `run`)
   status       print counts
 
 Options
-  --out DIR    dry run: write the Markdown units to DIR, no upload, no state change
+  --out DIR    dry run: write the Markdown items to DIR, no upload, no state change
   --limit N    process at most N videos this run
   --no-ping    skip the monitor ping
   --config F   config file (default: config.yaml next to this script)
@@ -79,7 +80,7 @@ def channels_from(cfg: dict) -> list[yt.Channel]:
 # --------------------------------------------------------------------------- state
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS units (
+CREATE TABLE IF NOT EXISTS units (   -- table and column names predate the Item rename; kept to avoid a migration
   unit_id TEXT PRIMARY KEY, source_type TEXT NOT NULL, key TEXT NOT NULL, hash8 TEXT NOT NULL,
   cf_item_id TEXT, published INTEGER, title TEXT, url TEXT, updated_at TEXT, last_seen_run TEXT);
 CREATE INDEX IF NOT EXISTS units_key ON units(key);
@@ -99,22 +100,22 @@ class State:
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
 
-    def unit(self, unit_id: str):
-        return self.db.execute("SELECT * FROM units WHERE unit_id=?", (unit_id,)).fetchone()
+    def item(self, item_id: str):
+        return self.db.execute("SELECT * FROM units WHERE unit_id=?", (item_id,)).fetchone()
 
-    def upsert_unit(self, u: fs.Unit, item_id: str | None, run_id: str):
+    def upsert_item(self, u: fs.Item, item_id: str | None, run_id: str):
         self.db.execute("""INSERT INTO units(unit_id,source_type,key,hash8,cf_item_id,published,title,url,updated_at,last_seen_run)
             VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(unit_id) DO UPDATE SET key=excluded.key,hash8=excluded.hash8,
             cf_item_id=excluded.cf_item_id,published=excluded.published,title=excluded.title,url=excluded.url,
             updated_at=excluded.updated_at,last_seen_run=excluded.last_seen_run""",
-            (u.unit_id, u.source_type, u.key, u.hash8, item_id, u.published, u.title, u.url, now(), run_id))
+            (u.item_id, u.source_type, u.key, u.hash8, item_id, u.published, u.title, u.url, now(), run_id))
         self.db.commit()
 
-    def touch_unit(self, unit_id: str, run_id: str):
-        self.db.execute("UPDATE units SET last_seen_run=? WHERE unit_id=?", (run_id, unit_id))
+    def touch_item(self, item_id: str, run_id: str):
+        self.db.execute("UPDATE units SET last_seen_run=? WHERE unit_id=?", (run_id, item_id))
         self.db.commit()
 
-    def stale_units(self, source_types: set[str], run_id: str, prefix: str | None = None):
+    def stale_items(self, source_types: set[str], run_id: str, prefix: str | None = None):
         q = f"SELECT * FROM units WHERE source_type IN ({','.join('?' * len(source_types))}) AND last_seen_run IS NOT ?"
         args = [*source_types, run_id]
         if prefix:
@@ -122,8 +123,8 @@ class State:
             args.append(prefix + "%")
         return self.db.execute(q, args).fetchall()
 
-    def delete_unit(self, unit_id: str):
-        self.db.execute("DELETE FROM units WHERE unit_id=?", (unit_id,))
+    def delete_item(self, item_id: str):
+        self.db.execute("DELETE FROM units WHERE unit_id=?", (item_id,))
         self.db.commit()
 
     def add_video(self, d: yt.Discovered) -> bool:
@@ -143,8 +144,8 @@ class State:
                         (status, now(), *kw.values(), video_id))
         self.db.commit()
 
-    def queue_delete(self, old_item_id: str, old_key: str, new_item_id: str, unit_id: str):
-        self.db.execute("INSERT OR REPLACE INTO pending_deletes VALUES(?,?,?,?,?)", (old_item_id, old_key, new_item_id, unit_id, now()))
+    def queue_delete(self, old_item_id: str, old_key: str, new_item_id: str, item_id: str):
+        self.db.execute("INSERT OR REPLACE INTO pending_deletes VALUES(?,?,?,?,?)", (old_item_id, old_key, new_item_id, item_id, now()))
         self.db.commit()
 
     def pending_deletes(self):
@@ -290,36 +291,36 @@ class Indexer:
         self.cfg, self.state, self.cf, self.run_id = cfg, state, cf, run_id
         self.stats = {"uploaded": 0, "unchanged": 0, "deleted": 0, "videos": 0, "no_captions": 0, "skipped": 0}
         self.errors: list[str] = []
-        self.uploaded: list[tuple[str, str, str]] = []   # (unit_id, key, cf item id) submitted this run
+        self.uploaded: list[tuple[str, str, str]] = []   # (item_id, key, cf item id) submitted this run
 
-    def sync_units(self, units: list[fs.Unit], complete_types: set[str] = frozenset(), prefix: str | None = None):
-        """Upload new/changed units (non-blocking). Old keys of changed units are deleted by finalize()
-        once the new item has indexed. Stale units of `complete_types` are deleted right away."""
+    def sync_items(self, items: list[fs.Item], complete_types: set[str] = frozenset(), prefix: str | None = None):
+        """Upload new/changed items (non-blocking). Old keys of changed items are deleted by finalize()
+        once the new item has indexed. Stale items of `complete_types` are deleted right away."""
         seen = set()
-        for u in units:
-            if u.unit_id in seen:
-                log.warning("duplicate unit id %s; keeping first", u.unit_id)
+        for u in items:
+            if u.item_id in seen:
+                log.warning("duplicate item id %s; keeping first", u.item_id)
                 continue
-            seen.add(u.unit_id)
-            old = self.state.unit(u.unit_id) if self.state else None
+            seen.add(u.item_id)
+            old = self.state.item(u.item_id) if self.state else None
             if old and old["hash8"] == u.hash8 and old["cf_item_id"]:
-                self.state.touch_unit(u.unit_id, self.run_id)
+                self.state.touch_item(u.item_id, self.run_id)
                 self.stats["unchanged"] += 1
                 continue
             item = self.cf.upload(u.key, u.body, {"source_type": u.source_type, "published": str(u.published)})
             log.log(logging.DEBUG if isinstance(self.cf, DryRun) else logging.INFO, "uploaded %s (%s)", u.key, item.get("status"))
             self.stats["uploaded"] += 1
-            self.uploaded.append((u.unit_id, u.key, item.get("id")))
+            self.uploaded.append((u.item_id, u.key, item.get("id")))
             if self.state:
                 if old and old["cf_item_id"] and old["key"] != u.key:
-                    self.state.queue_delete(old["cf_item_id"], old["key"], item.get("id"), u.unit_id)
-                self.state.upsert_unit(u, item.get("id"), self.run_id)
+                    self.state.queue_delete(old["cf_item_id"], old["key"], item.get("id"), u.item_id)
+                self.state.upsert_item(u, item.get("id"), self.run_id)
         if complete_types and self.state:
-            for row in self.state.stale_units(set(complete_types), self.run_id, prefix):
+            for row in self.state.stale_items(set(complete_types), self.run_id, prefix):
                 log.info("removing stale %s (%s)", row["key"], row["unit_id"])
                 if row["cf_item_id"]:
                     self.cf.delete(row["cf_item_id"])
-                self.state.delete_unit(row["unit_id"])
+                self.state.delete_item(row["unit_id"])
                 self.stats["deleted"] += 1
 
     def finalize(self, timeout_s: int = 4 * 3600):
@@ -330,7 +331,7 @@ class Indexer:
             self.errors.append(f"indexing queue did not drain within {timeout_s}s")
             log.error("indexing queue did not drain within %ds", timeout_s)
         failed = {e.get("id"): e for e in self.cf.errors()}
-        for unit_id, key, item_id in self.uploaded:
+        for item_id, key, item_id in self.uploaded:
             if item_id in failed:
                 msg = failed[item_id].get("error") or "indexing error"
                 self.errors.append(f"index error {key}: {msg}")
@@ -340,7 +341,7 @@ class Indexer:
                 except Exception as e:
                     log.warning("could not delete failed item %s: %s", key, e)
                 if self.state:
-                    self.state.delete_unit(unit_id)   # forces a re-upload next run
+                    self.state.delete_item(item_id)   # forces a re-upload next run
         if self.state:
             for row in self.state.pending_deletes():
                 if row["new_item_id"] in failed:
@@ -358,8 +359,39 @@ class Indexer:
 
     # ---- FIRST
     def run_first(self):
-        units = fs.collect_first()
-        self.sync_units(units, complete_types={"manual", "team_update", "hub", "qa"})
+        session = fs.make_session()
+        items, hub = fs.collect_first(session)
+        types = {"manual", "team_update", "hub"}
+        try:
+            qa = fs.collect_qa(session, hub)
+            have = (self.state.counts().get("items.qa", 0) if self.state else 0)
+            if not qa and have:
+                raise fs.SourceError(f"Q&A feed returned nothing but {have} Q&A items are indexed; keeping them")
+            items += qa
+            types.add("qa")
+        except Exception as e:
+            self.errors.append(f"Q&A: {e}")
+            log.exception("Q&A stage failed; existing Q&A items are kept")
+        self.sync_items(items, complete_types=types)
+
+    # ---- weekly question test (retrieval check against the live API; see tests/run_questions.py)
+    def run_question_test(self) -> bool:
+        tcfg = self.cfg.get("tests", {})
+        out = HERE / "tests" / "results" / f"{datetime.now().strftime('%Y-%m-%d')}-30-questions.md"
+        cmd = [sys.executable, str(HERE / "tests" / "run_questions.py"), "--grade", "--out", str(out),
+               "--endpoint", tcfg.get("endpoint", "https://ftc.uprobotics.tech/api")]
+        if tcfg.get("fail_ping", True):
+            cmd.append("--fail-ping")
+        if tcfg.get("commit", True):
+            cmd.append("--commit")
+        log.info("question test: %s", " ".join(cmd[1:]))
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        score = next((l for l in reversed(p.stdout.splitlines()) if l.startswith("**Score")), "(no score line)")
+        log.info("question test finished rc=%s %s", p.returncode, score)
+        if p.returncode != 0:
+            self.errors.append(f"question test: {score} {p.stderr.strip()[-200:]}")
+            return False
+        return True
 
     # ---- documentation websites
     def run_web(self, only: list[str] | None = None, max_pages: int | None = None):
@@ -378,16 +410,16 @@ class Indexer:
             if max_pages:
                 src.max_pages = max_pages
             try:
-                units = ws.fetch_units(src, session, default_pub)
+                items = ws.fetch_items(src, session, default_pub)
             except Exception as e:
                 self.errors.append(f"web {src.id}: {e}")
                 log.exception("web source %s failed", src.id)
                 continue
-            if len(units) < 10 and not max_pages:
-                self.errors.append(f"web {src.id}: only {len(units)} units; not deleting old ones")
-                self.sync_units(units)
+            if len(items) < 10 and not max_pages:
+                self.errors.append(f"web {src.id}: only {len(items)} items; not deleting old ones")
+                self.sync_items(items)
                 continue
-            self.sync_units(units, complete_types={src.source_type}, prefix=f"web:{src.id}:")
+            self.sync_items(items, complete_types={src.source_type}, prefix=f"web:{src.id}:")
             if self.state:
                 self.state.set(f"web:{src.id}:last", now())
 
@@ -500,12 +532,12 @@ class Indexer:
                 self.state.set_video(vid, "pending", note="live/upcoming; retry later")
             else:
                 season = yt.season_label(cap.upload_date, season_starts, self.cfg["season"]["label"])
-                units = yt.video_units(cap, season)
-                self.sync_units(units)
-                self.state.set_video(vid, "captioned", caption_kind=cap.kind, windows=len(units),
+                items = yt.video_items(cap, season)
+                self.sync_items(items)
+                self.state.set_video(vid, "captioned", caption_kind=cap.kind, windows=len(items),
                                      upload_date=cap.upload_date, title=cap.title, duration=cap.duration)
                 self.stats["videos"] += 1
-                log.info("indexed %s: %d windows (%s captions, %s)", vid, len(units), cap.kind, season)
+                log.info("indexed %s: %d windows (%s captions, %s)", vid, len(items), cap.kind, season)
             for f in workdir.glob(f"{vid}.*"):
                 f.unlink(missing_ok=True)
             if i < len(rows) - 1:
@@ -531,7 +563,7 @@ class Indexer:
             if r["source_type"] == "video":
                 vid = r["unit_id"].split(":", 1)[1].rsplit("-", 1)[0]
                 self.state.set_video(vid, "pending", note="reconcile: re-index")
-            self.state.delete_unit(r["unit_id"])
+            self.state.delete_item(r["unit_id"])
         self.state.db.commit()
         self.state.set("last_reconcile", now())
         log.info("reconcile: %d remote, %d local, %d missing", len(remote), len(local), len(missing))
@@ -553,11 +585,11 @@ def setup_logging(log_dir: Path):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "web", "reconcile", "status"])
+    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "web", "reconcile", "test", "status"])
     ap.add_argument("--source", nargs="*", help="web: only these source ids")
     ap.add_argument("--max-pages", type=int, help="web: cap pages per source (testing)")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
-    ap.add_argument("--out", help="dry run: write units to this directory instead of uploading")
+    ap.add_argument("--out", help="dry run: write items to this directory instead of uploading")
     ap.add_argument("--limit", type=int, help="max videos to process this run")
     ap.add_argument("--no-ping", action="store_true")
     args = ap.parse_args(argv)
@@ -638,6 +670,14 @@ def main(argv=None) -> int:
             except Exception as e:
                 ix.errors.append(f"reconcile: {e}")
                 log.exception("reconcile failed")
+        weekly_test = (args.command == "run" and not dry and cfg.get("tests", {}).get("weekly", True)
+                       and datetime.now().weekday() == cfg["youtube"]["defaults"]["reconcile_weekday"])
+        if args.command == "test" or weekly_test:
+            try:
+                ix.run_question_test()
+            except Exception as e:
+                ix.errors.append(f"question test: {e}")
+                log.exception("question test failed to run")
     finally:
         ok = not ix.errors
         summary = json.dumps({"stats": ix.stats, "errors": ix.errors[:20], "seconds": int(time.time() - started)})
