@@ -42,7 +42,7 @@ web_sources:
     selector: article
     include: ["docs/"]
     license: CC BY-NC 2.0
-    enabled: false   # HOLD: gm0 is licensed NonCommercial (CC BY-NC 2.0); Tarun to decide whether a free tool run by UP Robotics qualifies
+    enabled: true    # Tarun 2026-09-12: index it; gm0 is CC BY-NC 2.0, credited in every unit header and in the page footer
     note: Community-written design and strategy guide. Advice and examples, not game rules.
   - id: ftcdocs
     name: FTC Docs (ftc-docs.firstinspires.org), official FIRST Tech Challenge programming and control system documentation
