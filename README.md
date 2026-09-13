@@ -4,7 +4,9 @@ A community tool for the *FIRST*® Tech Challenge 2026-27 season (BIOBUZZ™). S
 **ftc.uprobotics.tech**, ask a question, and get a short answer with links to the exact source: a rule in the
 official Competition Manual, a Team Update, a Q&A entry, or a timestamped moment in a YouTube video.
 
-Not affiliated with or endorsed by *FIRST*. AI answers can be wrong; always check the linked source.
+The helper is free and community-run: no accounts, no ads, no paid tier. UP Robotics provides the hosting and
+development support; the code is open source under the MIT license. Not affiliated with or endorsed by *FIRST*.
+AI answers can be wrong; always check the linked source.
 
 This repository is published for transparency. **Contributions are not accepted**; please open an issue
 or use the "Report a problem" link on the page instead.
