@@ -27,6 +27,15 @@ class FakeCF:
     def list_all(self):
         return list(self.items.values())
 
+    def drain(self, timeout_s=0, poll_s=0):
+        return True
+
+    def errors(self):
+        return []
+
+    def item(self, item_id):
+        return self.items[item_id]
+
 
 def unit(uid, body, st="manual"):
     return fs.Unit(unit_id=uid, source_type=st, title=uid, body=body, url="u", published=1)
@@ -52,7 +61,11 @@ class SyncTest(unittest.TestCase):
         # G1 changed -> new key uploaded, old deleted; G2 gone -> deleted
         a2 = unit("manual:G1", "one changed")
         ix = self.ix("r3"); ix.sync_units([a2], {"manual"})
-        self.assertEqual((ix.stats["uploaded"], ix.stats["deleted"]), (1, 2))
+        self.assertEqual((ix.stats["uploaded"], ix.stats["deleted"]), (1, 1))   # stale G2 gone; old G1 waits
+        self.assertEqual(len(self.state.pending_deletes()), 1)
+        ix.finalize()
+        self.assertEqual(ix.stats["deleted"], 2)
+        self.assertEqual(len(self.state.pending_deletes()), 0)
         keys = {it["key"] for it in self.cf.items.values()}
         self.assertEqual(keys, {a2.key})
         self.assertTrue(a2.key.startswith("manual--G1--") and a2.key != a.key)

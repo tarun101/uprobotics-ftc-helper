@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS videos (
   video_id TEXT PRIMARY KEY, channel_id TEXT, title TEXT, upload_date TEXT, duration INTEGER, via TEXT,
   status TEXT NOT NULL, caption_kind TEXT, windows INTEGER, note TEXT, discovered_at TEXT, attempted_at TEXT);
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, started TEXT, finished TEXT, ok INTEGER, summary TEXT);
+CREATE TABLE IF NOT EXISTS pending_deletes (old_item_id TEXT PRIMARY KEY, old_key TEXT, new_item_id TEXT, unit_id TEXT, queued_at TEXT);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -134,6 +135,17 @@ class State:
         cols = ", ".join(f"{k}=?" for k in kw)
         self.db.execute(f"UPDATE videos SET status=?, attempted_at=?{', ' + cols if cols else ''} WHERE video_id=?",
                         (status, now(), *kw.values(), video_id))
+        self.db.commit()
+
+    def queue_delete(self, old_item_id: str, old_key: str, new_item_id: str, unit_id: str):
+        self.db.execute("INSERT OR REPLACE INTO pending_deletes VALUES(?,?,?,?,?)", (old_item_id, old_key, new_item_id, unit_id, now()))
+        self.db.commit()
+
+    def pending_deletes(self):
+        return self.db.execute("SELECT * FROM pending_deletes").fetchall()
+
+    def clear_delete(self, old_item_id: str):
+        self.db.execute("DELETE FROM pending_deletes WHERE old_item_id=?", (old_item_id,))
         self.db.commit()
 
     def get(self, k: str, default=None):
@@ -187,17 +199,42 @@ class AISearch:
         raise RuntimeError(f"{method} {path}: gave up after retries ({last})")
 
     def upload(self, key: str, body: str, metadata: dict) -> dict:
+        """Submit a document for indexing and return immediately (status 'queued')."""
         data = self._req("POST", "/items",
                          files={"file": (key, body.encode("utf-8"), "text/markdown")},
-                         data={"metadata": json.dumps(metadata), "wait_for_completion": "true"})
-        item = data["result"]
-        deadline = time.time() + 180
-        while item.get("status") in ("queued", "running") and time.time() < deadline:
-            time.sleep(3)
-            item = self._req("GET", f"/items/{item['id']}")["result"]
-        if item.get("status") not in ("completed",):
-            raise RuntimeError(f"upload {key}: status={item.get('status')} error={item.get('error')}")
-        return item
+                         data={"metadata": json.dumps(metadata)})
+        return data["result"]
+
+    def item(self, item_id: str) -> dict:
+        return self._req("GET", f"/items/{item_id}")["result"]
+
+    def count(self, status: str) -> int:
+        info = self._req("GET", "/items", params={"status": status, "per_page": 1}).get("result_info") or {}
+        return int(info.get("total_count", 0))
+
+    def drain(self, timeout_s: int = 4 * 3600, poll_s: int = 30) -> bool:
+        """Wait until nothing is queued or running. Returns False on timeout."""
+        deadline = time.time() + timeout_s
+        last = None
+        while time.time() < deadline:
+            pending = self.count("queued") + self.count("running")
+            if pending == 0:
+                return True
+            if pending != last:
+                log.info("indexing: %d items still queued/running", pending)
+                last = pending
+            time.sleep(poll_s)
+        return False
+
+    def errors(self) -> list[dict]:
+        out, page = [], 1
+        while True:
+            data = self._req("GET", "/items", params={"status": "error", "page": page, "per_page": 50})
+            res = data.get("result") or []
+            out += res
+            if len(res) < 50:
+                return out
+            page += 1
 
     def delete(self, item_id: str) -> None:
         self._req("DELETE", f"/items/{item_id}")
@@ -235,6 +272,9 @@ class DryRun:
     def delete(self, item_id): pass
     def find_by_key(self, key): return None
     def list_all(self): return []
+    def drain(self, timeout_s=0, poll_s=0): return True
+    def errors(self): return []
+    def item(self, item_id): return {"id": item_id, "status": "completed"}
 
 
 # --------------------------------------------------------------------------- sync
@@ -244,9 +284,11 @@ class Indexer:
         self.cfg, self.state, self.cf, self.run_id = cfg, state, cf, run_id
         self.stats = {"uploaded": 0, "unchanged": 0, "deleted": 0, "videos": 0, "no_captions": 0, "skipped": 0}
         self.errors: list[str] = []
+        self.uploaded: list[tuple[str, str, str]] = []   # (unit_id, key, cf item id) submitted this run
 
     def sync_units(self, units: list[fs.Unit], complete_types: set[str] = frozenset()):
-        """Upload new/changed units, then delete stale ones for source types listed in complete_types."""
+        """Upload new/changed units (non-blocking). Old keys of changed units are deleted by finalize()
+        once the new item has indexed. Stale units of `complete_types` are deleted right away."""
         seen = set()
         for u in units:
             if u.unit_id in seen:
@@ -261,10 +303,10 @@ class Indexer:
             item = self.cf.upload(u.key, u.body, {"source_type": u.source_type, "published": str(u.published)})
             log.log(logging.DEBUG if isinstance(self.cf, DryRun) else logging.INFO, "uploaded %s (%s)", u.key, item.get("status"))
             self.stats["uploaded"] += 1
-            if old and old["cf_item_id"] and old["key"] != u.key:
-                self.cf.delete(old["cf_item_id"])
-                self.stats["deleted"] += 1
+            self.uploaded.append((u.unit_id, u.key, item.get("id")))
             if self.state:
+                if old and old["cf_item_id"] and old["key"] != u.key:
+                    self.state.queue_delete(old["cf_item_id"], old["key"], item.get("id"), u.unit_id)
                 self.state.upsert_unit(u, item.get("id"), self.run_id)
         if complete_types and self.state:
             for row in self.state.stale_units(set(complete_types), self.run_id):
@@ -273,6 +315,36 @@ class Indexer:
                     self.cf.delete(row["cf_item_id"])
                 self.state.delete_unit(row["unit_id"])
                 self.stats["deleted"] += 1
+
+    def finalize(self, timeout_s: int = 4 * 3600):
+        """Wait for the indexing queue, surface errors, then delete superseded keys."""
+        if not self.uploaded and not (self.state and self.state.pending_deletes()):
+            return
+        if not self.cf.drain(timeout_s=timeout_s):
+            self.errors.append(f"indexing queue did not drain within {timeout_s}s")
+            log.error("indexing queue did not drain within %ds", timeout_s)
+        failed = {e.get("id"): e for e in self.cf.errors()}
+        for unit_id, key, item_id in self.uploaded:
+            if item_id in failed:
+                msg = failed[item_id].get("error") or "indexing error"
+                self.errors.append(f"index error {key}: {msg}")
+                log.error("index error %s: %s", key, msg)
+                if self.state:
+                    self.state.delete_unit(unit_id)   # forces a re-upload next run
+        if self.state:
+            for row in self.state.pending_deletes():
+                if row["new_item_id"] in failed:
+                    continue  # keep the old copy until a good replacement exists
+                try:
+                    st = self.cf.item(row["new_item_id"]).get("status")
+                except Exception as e:
+                    log.warning("could not check %s: %s", row["new_item_id"], e)
+                    continue
+                if st == "completed":
+                    self.cf.delete(row["old_item_id"])
+                    self.state.clear_delete(row["old_item_id"])
+                    self.stats["deleted"] += 1
+                    log.info("deleted superseded %s", row["old_key"])
 
     # ---- FIRST
     def run_first(self):
@@ -466,6 +538,12 @@ def main(argv=None) -> int:
             except Exception as e:
                 ix.errors.append(f"YouTube: {e}")
                 log.exception("YouTube stage failed")
+        if args.command in ("run", "first", "youtube", "backfill"):
+            try:
+                ix.finalize()
+            except Exception as e:
+                ix.errors.append(f"finalize: {e}")
+                log.exception("finalize failed")
         if args.command == "reconcile" or (args.command == "run" and not dry and
                                             datetime.now().weekday() == cfg["youtube"]["defaults"]["reconcile_weekday"]):
             try:
