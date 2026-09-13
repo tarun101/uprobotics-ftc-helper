@@ -406,9 +406,20 @@ class Indexer:
             except yt.Blocked as e:
                 raise
             except Exception as e:  # one bad feed must not stop the others
-                self.errors.append(f"discover {ch.name}: {e}")
-                log.error("discover %s: %s", ch.name, e)
-                continue
+                if flat:
+                    self.errors.append(f"discover {ch.name}: {e}")
+                    log.error("discover %s: %s", ch.name, e)
+                    continue
+                # RSS failed (YouTube served 404 HTML for the feeds on 2026-09-13): fall back to the channel listing
+                log.warning("RSS for %s failed (%s); using the channel listing instead", ch.name, str(e)[:120])
+                try:
+                    found = yt.discover_flat(ch, self.cfg["paths"]["yt_dlp"])
+                except yt.Blocked:
+                    raise
+                except Exception as e2:
+                    self.errors.append(f"discover {ch.name}: RSS and channel listing both failed: {e2}")
+                    log.error("discover %s: %s", ch.name, e2)
+                    continue
             for d in found:
                 if not ch.title_ok(d.title):
                     continue
