@@ -74,6 +74,7 @@ class HubEntry:
     url: str
     version: str | None = None
     updated: str | None = None   # "Sep 12, 2026" as printed on the hub
+    external: bool = False       # listed on the hub but outside /ftc/game/: linked, never fetched
 
 
 @dataclass
@@ -83,7 +84,7 @@ class HubInfo:
 
     def find(self, path_suffix: str) -> HubEntry | None:
         for e in self.entries:
-            if urlparse(e.url).path.rstrip("/").endswith(path_suffix):
+            if not e.external and urlparse(e.url).path.rstrip("/").endswith(path_suffix):
                 return e
         return None
 
@@ -91,14 +92,14 @@ class HubInfo:
     def team_updates(self) -> list[HubEntry]:
         out = []
         for e in self.entries:
-            if re.search(r"/tu-(\d+)$", urlparse(e.url).path):
+            if not e.external and re.search(r"/tu-(\d+)$", urlparse(e.url).path):
                 out.append(e)
         return out
 
     @property
     def qa_archive(self) -> HubEntry | None:
         for e in self.entries:
-            if re.search(r"q\s*&\s*a\s+archive", e.title, re.I):
+            if not e.external and re.search(r"q\s*&\s*a\s+archive", e.title, re.I):
                 return e
         return None
 
@@ -177,16 +178,17 @@ def parse_hub(html: str, base_url: str = HUB_URL) -> HubInfo:
     seen = set()
     for a in soup.select("a[href]"):
         href = urljoin(base_url + "/", a["href"])
-        if not allowed(href) or href.rstrip("/") == HUB_URL:
-            continue
+        external = not allowed(href)
+        if href.rstrip("/") == HUB_URL or (external and urlparse(href).netloc.endswith("firstinspires.org") is False and "youtu" not in href):
+            continue  # skip nav/footer links to unrelated sites; keep FIRST pages and the game animation
         title = el_text(a)
-        if not title or href in seen:
+        if not title or href in seen or title in ("Login", "About", "Help Center", "Donate", "Report a Concern", "Legal Notices", "Privacy Policy", "FIRST Resources", "FIRST Tech Challenge"):
             continue
         seen.add(href)
         container = a.find_parent(["li", "div", "p", "td"])
         ctx = el_text(container) if container else ""
         m = VERSION_RE.search(ctx)
-        info.entries.append(HubEntry(title=title, url=href,
+        info.entries.append(HubEntry(title=title, url=href, external=external,
                                      version=m.group(1) if m else None,
                                      updated=m.group(2) if m else None))
     return info
@@ -197,16 +199,32 @@ def hub_unit(info: HubInfo, url: str = HUB_URL) -> Unit:
     lines.append("Current official documents and versions listed on the hub:")
     lines.append("")
     for e in info.entries:
+        if e.external:
+            continue
         ver = f" — Version {e.version}" if e.version else ""
         upd = f" (updated {e.updated})" if e.updated else ""
         lines.append(f"- {e.title}{ver}{upd}: {e.url}")
     lines.append("")
+    ext = [e for e in info.entries if e.external]
+    if ext:
+        lines.append("Other official FIRST resources linked from the hub (programming resources, robot and team resources, "
+                     "team management, playing field resources, volunteer and event resources, game animation, Team Update email sign-up):")
+        lines.append("")
+        for e in ext:
+            lines.append(f"- {e.title}: {e.url}")
+        lines.append("")
     tus = info.team_updates
     if tus:
-        lines.append("Team Updates published so far: " + ", ".join(t.title for t in tus) + ".")
+        latest = max(tus, key=lambda t: int(re.search(r"/tu-(\d+)$", urlparse(t.url).path).group(1)))
+        num = re.search(r"/tu-(\d+)$", urlparse(latest.url).path).group(1)
+        lines.append(f"Latest Team Update (newest, most recent): Team Update {num} ({latest.version or 'TU' + num}), "
+                     f"published {latest.updated or 'date not listed'}: {latest.url}")
+        lines.append("All Team Updates published so far: " + ", ".join(t.title for t in tus) + ".")
+    manual = info.find("/cm-html")
+    if manual:
+        lines.append(f"Current Competition Manual version: {manual.version or 'unknown'} (updated {manual.updated or 'date not listed'}).")
     qa = info.qa_archive
     lines.append("Public Q&A archive: " + (qa.url if qa else "not yet published on the hub."))
-    manual = info.find("/cm-html")
     published = parse_hub_date(manual.updated if manual else None)
     return Unit(unit_id="hub", source_type="hub", title=info.season_title,
                 body="\n".join(lines) + "\n", url=url, published=published)
