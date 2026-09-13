@@ -23,7 +23,9 @@ Mac mini (home internet) — launchd at 23:00, 02:00 and 05:00 ET
     └─ on success: ping a dead-man's-switch monitor
 
 Cloudflare AI Search instance "ftc-2026" (built-in storage, hybrid search)
-    └─ public endpoint: /chat/completions, /search, /mcp → page snippets + Claude/ChatGPT skill
+    ├─ API Worker at ftc.uprobotics.tech/api (page/src/index.js): runs the keyword and vector legs itself,
+    │    waits for both, fuses them (RRF), generates with the same Workers AI model → page widgets
+    └─ public endpoint: /mcp → Claude/ChatGPT skill
 ```
 
 Only URLs under `https://ftc-resources.firstinspires.org/ftc/game/` are fetched. No video or audio is
@@ -37,7 +39,7 @@ downloaded; captions only. No logins, cookies, or proxies.
 | `first_sources.py` | Manual splitter (rule anchors + headings), Team Update PDFs, hub, Q&A archive |
 | `youtube_sources.py` | RSS / flat-playlist discovery, yt-dlp captions, 2–3 minute windows, season labels |
 | `config.yaml` | Channels and filters, instance name, paths (no secrets) |
-| `page/` | Static page for `ftc.uprobotics.tech` (Cloudflare AI Search UI snippets) + `wrangler.jsonc` |
+| `page/` | `ftc.uprobotics.tech`: static pages (AI Search UI snippets) + `src/index.js`, the API Worker the widgets call (AI Search, Workers AI, and rate-limit bindings in `wrangler.jsonc`) |
 | `launchd/` | launchd plist template for the 23:00 / 02:00 / 05:00 runs |
 | `tests/` | 30-question test and bad-question list used for acceptance |
 
@@ -83,6 +85,15 @@ downloaded; captions only. No logins, cookies, or proxies.
 
 Logs: `~/Library/Logs/ftc-index/ftc-index.log`. State: `~/Library/Application Support/ftc-index/state.sqlite`.
 A run exits non-zero on any failure and does not ping the monitor, so the monitor emails after two missed days.
+
+## Why the API Worker
+
+AI Search's hybrid search gives its vector leg a short time budget and silently returns keyword-only results
+when the Workers AI query embedding is slow (2–3 of 10 searches had vector results on 2026-09-13). The Worker
+runs `retrieval_type: keyword` and `retrieval_type: vector` as two calls, waits for both, fuses them with
+Reciprocal Rank Fusion, and answers with `@cf/meta/llama-3.3-70b-instruct-fp8-fast` using the prompt in
+`PROMPT.md`. It serves the same `/search` and `/chat/completions` shapes the UI snippets expect, so the page
+just points `api-url` at `https://ftc.uprobotics.tech/api/`. A rate-limit binding caps each IP at 60/min.
 
 ## Item keys and metadata
 

@@ -1,7 +1,12 @@
 {
-  // Static page for ftc.uprobotics.tech. Deploy from this folder:  npx wrangler deploy
+  // Static page + API Worker for ftc.uprobotics.tech. Deploy from this folder:  wrangler deploy
   "name": "ftc-helper-page",
+  "main": "src/index.js",
   "compatibility_date": "2026-09-01",
-  "assets": { "directory": "./public", "not_found_handling": "404-page" },
-  "routes": [{ "pattern": "ftc.uprobotics.tech", "custom_domain": true }]
+  "assets": { "directory": "./public", "not_found_handling": "404-page", "binding": "ASSETS" },
+  "routes": [{ "pattern": "ftc.uprobotics.tech", "custom_domain": true }],
+  "ai_search": [{ "binding": "FTC", "instance_name": "ftc-2026" }],
+  "ai": { "binding": "AI" },
+  "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
+  "observability": { "enabled": false }
 }
