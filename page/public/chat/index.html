@@ -133,6 +133,15 @@
     .chat-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background-color: var(--up-paper); background-image: var(--pattern-grid); background-size: 24px 24px; }
     .chat-note { flex: none; font-size: 13px; color: var(--up-gray-500); text-align: center; padding: 8px 16px; }
     chat-page-snippet { flex: 1; display: block; min-height: 0; height: calc(100vh - 68px - 34px); --search-snippet-primary-color: #F0561D; --search-snippet-border-radius: 12px; }
+    chat-bubble-snippet { --search-snippet-primary-color: #F0561D; --search-snippet-border-radius: 16px; }
+    .phone-only { display: none; }
+    @media (max-width: 860px) {
+      /* the full-page widget keeps its history sidebar open on phones; use the chat window instead */
+      chat-page-snippet { display: none; }
+      .phone-only { display: block; padding: 32px 24px; }
+      chat-bubble-snippet.phone-only { padding: 0; }
+      .phone-only .sticker { transform: none; }
+    }
   </style>
 </head>
 <body>
@@ -145,13 +154,32 @@
       </a>
       <nav class="header-links">
         <a class="plain" href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub</a>
-        <a class="btn sm secondary" href="/">Back to overview</a>
+        <a class="btn sm secondary" href="/">Overview</a>
       </nav>
     </div>
   </header>
   <main class="chat-wrap">
     <p class="chat-note">AI answers can be wrong; open the linked source. Don't type personal information. Chat history stays in this browser only. Not affiliated with <em>FIRST</em>®.</p>
     <chat-page-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite hide-branding theme="light"></chat-page-snippet>
+    <div class="phone-only">
+      <div class="sticker">
+        <p class="q">Chat on a phone</p>
+        <p class="a">On a phone the chat opens as a window. <strong>Tap the orange chat button</strong> in the bottom-right corner to start, or go back to the <a href="/">overview</a>.</p>
+      </div>
+    </div>
   </main>
+  <chat-bubble-snippet class="phone-only" api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite hide-branding theme="light"></chat-bubble-snippet>
+  <script>
+    // On phones, open the chat window right away.
+    if (window.matchMedia('(max-width: 860px)').matches) {
+      var tries = 0;
+      var t = setInterval(function () {
+        var el = document.querySelector('chat-bubble-snippet');
+        var btn = el && el.shadowRoot && el.shadowRoot.querySelector('button');
+        if (btn) { try { btn.click(); } catch (e) {} clearInterval(t); }
+        if (++tries > 40) clearInterval(t);
+      }, 250);
+    }
+  </script>
 </body>
 </html>
