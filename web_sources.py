@@ -279,14 +279,15 @@ def fetch_units(src: WebSource, session: requests.Session, default_published: in
                 time.sleep(src.delay_seconds)
         if len(md) < 200:
             continue
+        link = page.url.replace("_", "%5F")   # the chat widget italicizes _text_, which would break URLs with underscores
         head = [f"# {title or slug(page.url, src.base)}", f"Source: {src.name}" + (f" ({src.license})" if src.license else ""),
-                f"Link: {page.url}", f"Type: {src.source_type}"]
+                f"Link: {link}", f"Type: {src.source_type}"]
         if src.note:
             head.append(f"Note: {src.note}")
         body = "\n".join(head) + "\n---\n\n" + md + "\n"
         if len(body.encode("utf-8")) > 3_500_000:
             body = body.encode("utf-8")[:3_500_000].decode("utf-8", errors="ignore")
         units.append(Unit(unit_id=f"web:{src.id}:{slug(page.url, src.base)}", source_type=src.source_type, title=title,
-                          body=body, url=page.url, published=page.lastmod or default_published))
+                          body=body, url=link, published=page.lastmod or default_published))
     log.info("%s: %d units from %d pages (%d fetch failures)", src.id, len(units), len(pages), failures)
     return units
