@@ -331,17 +331,17 @@ class Indexer:
             self.errors.append(f"indexing queue did not drain within {timeout_s}s")
             log.error("indexing queue did not drain within %ds", timeout_s)
         failed = {e.get("id"): e for e in self.cf.errors()}
-        for item_id, key, item_id in self.uploaded:
-            if item_id in failed:
-                msg = failed[item_id].get("error") or "indexing error"
+        for our_id, key, cf_id in self.uploaded:
+            if cf_id in failed:
+                msg = failed[cf_id].get("error") or "indexing error"
                 self.errors.append(f"index error {key}: {msg}")
                 log.error("index error %s: %s", key, msg)
                 try:
-                    self.cf.delete(item_id)            # drop the failed copy so the retry does not duplicate the key
+                    self.cf.delete(cf_id)              # drop the failed copy so the retry does not duplicate the key
                 except Exception as e:
                     log.warning("could not delete failed item %s: %s", key, e)
                 if self.state:
-                    self.state.delete_item(item_id)   # forces a re-upload next run
+                    self.state.delete_item(our_id)    # forces a re-upload next run
         if self.state:
             for row in self.state.pending_deletes():
                 if row["new_item_id"] in failed:
