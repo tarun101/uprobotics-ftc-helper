@@ -70,8 +70,10 @@ downloaded; captions only. No logins, cookies, or proxies.
    sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
    ```
-9. Page: edit `page/public/index.html` (replace `PUBLIC_ENDPOINT_ID` and `REPORT_EMAIL`), then
-   `cd page && npx wrangler deploy`.
+9. Page: `cd page && wrangler deploy` (the endpoint ID and report address are already in `public/index.html`).
+   On the Mac mini, npm-downloaded native binaries (esbuild, workerd) are killed on launch, so wrangler lives in
+   `/Users/Shared/ftc-tools` (installed with `--ignore-scripts`), runs with `ESBUILD_BINARY_PATH=/opt/homebrew/bin/esbuild`
+   (`brew install esbuild`), and its nested esbuild `main.js` has the version constant patched to the brew version.
 
 Logs: `~/Library/Logs/ftc-index/ftc-index.log`. State: `~/Library/Application Support/ftc-index/state.sqlite`.
 A run exits non-zero on any failure and does not ping the monitor, so the monitor emails after two missed days.
