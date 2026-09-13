@@ -39,6 +39,7 @@ class WebSource:
     delay_seconds: float = 1.0
     max_pages: int = 2000
     markdown_suffix: str = ""       # e.g. ".md" for GitBook sites that serve a Markdown copy of every page
+    enabled: bool = True
 
 
 @dataclass
@@ -96,6 +97,8 @@ def discover(src: WebSource, session: requests.Session) -> list[Page]:
     seen, out = set(), []
     for p in pages:
         if urlparse(p.url).netloc != host or any(x in p.url for x in src.exclude) or p.url in seen:
+            continue
+        if urlparse(p.url).path in ("", "/") and src.kind == "sitemap":
             continue
         seen.add(p.url)
         out.append(p)
@@ -226,6 +229,18 @@ def html_to_markdown(html: str, selector: str) -> tuple[str, str]:
     return title, md
 
 
+def clean_gitbook_markdown(text: str) -> str:
+    """Strip GitBook template tags and the llms.txt preface; flatten HTML card tables to lines."""
+    text = re.sub(r"^> For the complete documentation index.*?\n", "", text.strip(), flags=re.M)
+    text = re.sub(r"\{%-?\s*/?(hint|endhint|tabs|endtabs|tab|endtab|embed|endembed|content-ref|endcontent-ref|file|stepper|endstepper|step|endstep|columns|endcolumns|column|endcolumn|code|endcode)\b[^%]*%\}", "", text)
+    text = re.sub(r"<table[^>]*>(.*?)</table>", lambda m: "\n".join("- " + norm(re.sub(r"<[^>]+>", " ", row)) for row in re.findall(r"<tr>(.*?)</tr>", m.group(1), re.S) if norm(re.sub(r"<[^>]+>", " ", row))), text, flags=re.S)
+    text = re.sub(r"<figure>.*?</figure>", "", text, flags=re.S)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"^# .*\n", "", text.strip(), count=1)     # page title is already in the unit header
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 # --------------------------------------------------------------------------- units
 
 def slug(url: str, base: str) -> str:
@@ -252,7 +267,7 @@ def fetch_units(src: WebSource, session: requests.Session, default_published: in
                 time.sleep(src.delay_seconds)
                 rm = session.get(md_url, timeout=60)
                 if rm.ok and "markdown" in rm.headers.get("content-type", "").lower() and not rm.text.lstrip().startswith("# Page Not Found"):
-                    md = re.sub(r"^# .*\n", "", rm.text.strip(), count=1).strip()
+                    md = clean_gitbook_markdown(rm.text)
         except requests.RequestException as e:
             failures += 1
             log.warning("%s: fetch failed %s: %s", src.id, page.url, e)

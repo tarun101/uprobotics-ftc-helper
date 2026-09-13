@@ -372,6 +372,9 @@ class Indexer:
             src = ws.WebSource(**raw)
             if only and src.id not in only:
                 continue
+            if not src.enabled and not only:
+                log.info("web source %s is disabled in config; skipping", src.id)
+                continue
             if max_pages:
                 src.max_pages = max_pages
             try:
