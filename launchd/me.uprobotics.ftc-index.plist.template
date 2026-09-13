@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Daily FTC index refresh at 20:00 local time (America/New_York on the Mac mini).
+       Install: sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template \
+                  > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
+                launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist -->
+  <key>Label</key><string>me.uprobotics.ftc-index</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/python</string>
+    <string>__REPO__/ftc_index.py</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/ftc-index/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/ftc-index/launchd.err.log</string>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+</dict>
+</plist>

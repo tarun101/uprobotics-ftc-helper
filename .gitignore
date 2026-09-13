@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.sqlite
+*.log
+captions/
+node_modules/
+.wrangler/
+.DS_Store
+secrets*
+*.local.yaml

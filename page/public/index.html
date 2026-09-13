@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UP Robotics FTC Helper</title>
+  <meta name="description" content="Ask a FIRST Tech Challenge 2026-27 (BIOBUZZ) question and get a short answer with links to the exact rule, Team Update, or video moment.">
+  <!-- Cloudflare AI Search UI snippets. Replace PUBLIC_ENDPOINT_ID with the instance's public endpoint ID
+       (AI Search > ftc-2026 > Settings > Public Endpoint). -->
+  <script type="module" src="https://PUBLIC_ENDPOINT_ID.search.ai.cloudflare.com/assets/v0.0.25/search-snippet.es.js"></script>
+  <style>
+    :root { --ink: #1c1c1e; --muted: #5b5b60; --accent: #e8590c; --bg: #fffdf9; --card: #ffffff; --line: #e6e2dc; }
+    @media (prefers-color-scheme: dark) {
+      :root { --ink: #f2f2f4; --muted: #b3b3b8; --accent: #ff8a3d; --bg: #141416; --card: #1e1e21; --line: #2c2c30; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 20px 96px; }
+    h1 { font-size: 1.9rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 0 0 16px; }
+    .card h2 { font-size: 1.05rem; margin: 0 0 8px; }
+    .notice { font-size: 0.95rem; color: var(--muted); }
+    .notice li { margin: 4px 0; }
+    .links a { display: inline-block; margin: 6px 12px 0 0; color: var(--accent); font-weight: 600; text-decoration: none; }
+    .links a:hover { text-decoration: underline; }
+    footer { margin-top: 32px; font-size: 0.85rem; color: var(--muted); }
+    search-bar-snippet, chat-bubble-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .examples span { font-size: 0.85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>UP Robotics FTC Helper</h1>
+    <p class="sub">Ask a 2026-27 <em>BIOBUZZ</em> season question. Answers link to the exact rule, Team Update, or video moment.</p>
+
+    <div class="card">
+      <h2>Search the rules and videos</h2>
+      <search-bar-snippet api-url="https://PUBLIC_ENDPOINT_ID.search.ai.cloudflare.com/" placeholder="Search rules, Team Updates, videos…" max-results="8"></search-bar-snippet>
+      <div class="examples" aria-label="Example questions">
+        <span>How tall can the robot be?</span>
+        <span>What changed in Team Update 00?</span>
+        <span>What is a STRATEGIC violation?</span>
+        <span>How do I start a mecanum drivetrain?</span>
+      </div>
+      <p class="notice" style="margin-bottom:0">For a full answer, use the chat bubble in the corner.</p>
+    </div>
+
+    <div class="card notice">
+      <h2>Please read</h2>
+      <ul>
+        <li>Not affiliated with or endorsed by <em>FIRST</em>®. <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of FIRST.</li>
+        <li>AI answers can be wrong. Always check the linked source.</li>
+        <li>Don't type personal information.</li>
+        <li>Rules come from the official Competition Manual, Team Updates, and Q&amp;A. Videos are advice and examples, not rules.</li>
+      </ul>
+    </div>
+
+    <div class="card links">
+      <h2>Official sources and tools</h2>
+      <a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub (manual, Team Updates, Q&amp;A)</a>
+      <a href="https://ftcscout.org/" rel="noopener">FTCScout (team and event data)</a>
+      <a href="https://www.uprobotics.tech/" rel="noopener">UP Robotics</a>
+    </div>
+
+    <footer>
+      A free community tool from <a href="https://www.uprobotics.tech/" style="color:var(--accent)">UP Robotics</a>, Bethesda, MD.
+      Content refreshes nightly. <a href="mailto:REPORT_EMAIL?subject=FTC%20Helper%20problem" style="color:var(--accent)">Report a problem</a>.
+    </footer>
+  </main>
+
+  <chat-bubble-snippet api-url="https://PUBLIC_ENDPOINT_ID.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite></chat-bubble-snippet>
+</body>
+</html>

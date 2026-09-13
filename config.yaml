@@ -1,0 +1,31 @@
+# UP Robotics FTC Helper — ingestion config (safe to commit; no secrets here).
+# Secrets live in the Mac mini Keychain:  security add-generic-password -s ftc-index -a cf-api-token -w
+#                                          security add-generic-password -s ftc-index -a monitor-ping-url -w
+
+cloudflare:
+  account_id: ""            # Cloudflare account ID (dashboard URL). Not secret, but fill in locally.
+  instance: ftc-2026        # AI Search instance name (default namespace)
+
+paths:
+  state_dir: ~/Library/Application Support/ftc-index
+  log_dir: ~/Library/Logs/ftc-index
+  yt_dlp: /opt/homebrew/bin/yt-dlp
+
+season:
+  label: "2026-27"
+  starts: 2026-09-01        # videos published on/after this date are labeled with `label`
+
+youtube:
+  defaults:
+    include_shorts: false
+    include_streams: true
+    backfill_per_day: 150   # max videos fetched per run
+    delay_seconds: [5, 15]  # random pause between videos
+    reconcile_weekday: 6    # Sunday: weekly flat-playlist rediscovery + item reconcile
+  channels:
+    - { name: FIRST Tech Challenge, id: UCkWMXdRQr5yoZRz7gFYyRcw }
+    - { name: Brogan M. Pratt,      id: UCWaxzmMG0w8AmKaUYIxcx5Q }
+    - { name: FTC Protostars,       id: UC48x8ssvxFszwzmCyYpY8oQ }
+    - { name: FUN Robotics Network, id: UCuJUknE5JjilAfNnmbvr22Q,
+        title_include: ["FTC", "FIRST Tech"], published_after: 2025-09-01 }
+    - { name: Wizards.exe FTC 9794, id: UC988iYaWDOF7Fpv6HqN-wjQ }
