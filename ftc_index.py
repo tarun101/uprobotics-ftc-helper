@@ -500,12 +500,13 @@ def main(argv=None) -> int:
         print(f"{'last_reconcile':24} {st.get('last_reconcile', '-')}")
         return 0
 
-    lock = open(state_dir / "run.lock", "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        log.error("another run is in progress; exiting")
-        return 3
+    if not dry:  # a dry run touches nothing shared, so it may overlap a live run
+        lock = open(state_dir / "run.lock", "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            log.error("another run is in progress; exiting")
+            return 3
 
     if dry:
         cf, state = DryRun(Path(args.out)), None

@@ -194,25 +194,14 @@ def parse_hub(html: str, base_url: str = HUB_URL) -> HubInfo:
     return info
 
 
-def hub_unit(info: HubInfo, url: str = HUB_URL) -> Unit:
-    lines = [f"# {info.season_title}", f"Source: official FIRST Tech Challenge game hub", f"Link: {url}", "Type: season hub", "---", ""]
-    lines.append("Current official documents and versions listed on the hub:")
-    lines.append("")
-    for e in info.entries:
-        if e.external:
-            continue
-        ver = f" — Version {e.version}" if e.version else ""
-        upd = f" (updated {e.updated})" if e.updated else ""
-        lines.append(f"- {e.title}{ver}{upd}: {e.url}")
-    lines.append("")
-    ext = [e for e in info.entries if e.external]
-    if ext:
-        lines.append("Other official FIRST resources linked from the hub (programming resources, robot and team resources, "
-                     "team management, playing field resources, volunteer and event resources, game animation, Team Update email sign-up):")
-        lines.append("")
-        for e in ext:
-            lines.append(f"- {e.title}: {e.url}")
-        lines.append("")
+def hub_units(info: HubInfo, url: str = HUB_URL) -> list[Unit]:
+    """Two small units: current versions/Team Updates, and the hub's list of official resource links."""
+    manual = info.find("/cm-html")
+    published = parse_hub_date(manual.updated if manual else None)
+    lines = [f"# {info.season_title} — current versions and Team Updates", "Source: official FIRST Tech Challenge game hub",
+             f"Link: {url}", "Type: season hub", "---", ""]
+    if manual:
+        lines.append(f"Current Competition Manual version: {manual.version or 'unknown'} (updated {manual.updated or 'date not listed'}). HTML manual: {manual.url}")
     tus = info.team_updates
     if tus:
         latest = max(tus, key=lambda t: int(re.search(r"/tu-(\d+)$", urlparse(t.url).path).group(1)))
@@ -220,14 +209,28 @@ def hub_unit(info: HubInfo, url: str = HUB_URL) -> Unit:
         lines.append(f"Latest Team Update (newest, most recent): Team Update {num} ({latest.version or 'TU' + num}), "
                      f"published {latest.updated or 'date not listed'}: {latest.url}")
         lines.append("All Team Updates published so far: " + ", ".join(t.title for t in tus) + ".")
-    manual = info.find("/cm-html")
-    if manual:
-        lines.append(f"Current Competition Manual version: {manual.version or 'unknown'} (updated {manual.updated or 'date not listed'}).")
     qa = info.qa_archive
     lines.append("Public Q&A archive: " + (qa.url if qa else "not yet published on the hub."))
-    published = parse_hub_date(manual.updated if manual else None)
-    return Unit(unit_id="hub", source_type="hub", title=info.season_title,
-                body="\n".join(lines) + "\n", url=url, published=published)
+    lines += ["", "Official documents listed on the hub:", ""]
+    for e in info.entries:
+        if e.external:
+            continue
+        ver = f" — Version {e.version}" if e.version else ""
+        upd = f" (updated {e.updated})" if e.updated else ""
+        lines.append(f"- {e.title}{ver}{upd}: {e.url}")
+    units = [Unit(unit_id="hub", source_type="hub", title=info.season_title, body="\n".join(lines) + "\n", url=url, published=published)]
+
+    ext = [e for e in info.entries if e.external]
+    if ext:
+        r = ["# Where to find official FTC resources: programming, robot and team, playing field, volunteer, and event resources",
+             "Source: official FIRST Tech Challenge game hub (\"Find More Resources\" and related links)", f"Link: {url}", "Type: season hub", "---", "",
+             "The official FIRST Tech Challenge game hub links to these FIRST resource pages. Programming resources (SDK, "
+             "Android Studio, Blocks, OnBot Java, control system documentation) are on the FIRST website's technology page. "
+             "Field drawings, CAD, and the field setup guide are under Playing Field Resources.", ""]
+        for e in ext:
+            r.append(f"- {e.title}: {e.url}")
+        units.append(Unit(unit_id="hub:resources", source_type="hub", title="Official FTC resources", body="\n".join(r) + "\n", url=url, published=published))
+    return units
 
 
 # --------------------------------------------------------------------------- manual
@@ -548,7 +551,7 @@ def collect_first(session: requests.Session | None = None) -> list[Unit]:
     hub = parse_hub(hub_html)
     if not hub.find("/cm-html"):
         raise SourceError("hub page has no Competition Manual HTML link; layout changed?")
-    units: list[Unit] = [hub_unit(hub)]
+    units: list[Unit] = hub_units(hub)
     manual, _, _ = fetch_manual(session, hub)
     units += manual
     units += team_update_units(session, hub)
