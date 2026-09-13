@@ -25,8 +25,9 @@
     .links a { display: inline-block; margin: 6px 12px 0 0; color: var(--accent); font-weight: 600; text-decoration: none; }
     .links a:hover { text-decoration: underline; }
     footer { margin-top: 32px; font-size: 0.85rem; color: var(--muted); }
-    search-bar-snippet, chat-bubble-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
-    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    chat-page-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    chat-page-snippet { display: block; height: 520px; max-height: 70vh; }
     .examples span { font-size: 0.85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); }
   </style>
 </head>
@@ -36,15 +37,15 @@
     <p class="sub">Ask a 2026-27 <em>BIOBUZZ</em> season question. Answers link to the exact rule, Team Update, or video moment.</p>
 
     <div class="card">
-      <h2>Search the rules and videos</h2>
-      <search-bar-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Search rules, Team Updates, videos…" max-results="8"></search-bar-snippet>
+      <h2>Ask a question</h2>
+      <p class="notice" style="margin-top:0">Try one of these, or type your own:</p>
       <div class="examples" aria-label="Example questions">
         <span>How tall can the robot be?</span>
         <span>What changed in Team Update 00?</span>
         <span>What is a STRATEGIC violation?</span>
-        <span>How do I start a mecanum drivetrain?</span>
+        <span>How do I build a mecanum drivetrain?</span>
       </div>
-      <p class="notice" style="margin-bottom:0">For a full answer, use the chat bubble in the corner.</p>
+      <chat-page-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite></chat-page-snippet>
     </div>
 
     <div class="card notice">
@@ -70,6 +71,5 @@
     </footer>
   </main>
 
-  <chat-bubble-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite></chat-bubble-snippet>
 </body>
 </html>
