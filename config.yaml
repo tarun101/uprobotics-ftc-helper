@@ -20,6 +20,7 @@ youtube:
     include_shorts: false
     include_streams: true
     backfill_per_day: 150   # max videos fetched per run
+    max_duration_seconds: 7200   # skip videos and streams longer than 2 hours (Tarun, 2026-09-12)
     delay_seconds: [5, 15]  # random pause between videos
     reconcile_weekday: 6    # Sunday: weekly flat-playlist rediscovery + item reconcile
   channels:
@@ -29,3 +30,32 @@ youtube:
     - { name: FUN Robotics Network, id: UCuJUknE5JjilAfNnmbvr22Q,
         title_include: ["FTC", "FIRST Tech"], published_after: 2025-09-01 }
     - { name: Wizards.exe FTC 9794, id: UC988iYaWDOF7Fpv6HqN-wjQ }
+
+# Documentation websites (added 2026-09-12). Fetched by our script once a week (reconcile weekday) or with `ftc_index.py web`.
+# AI Search's own website crawler only accepts domains on this Cloudflare account, so these are fetched like the manual.
+web_sources:
+  - id: gm0
+    name: Game Manual 0 (gm0.org), community FTC design guide
+    source_type: guide
+    kind: sphinx
+    base: https://gm0.org/en/latest/
+    selector: article
+    include: ["docs/"]
+    license: CC BY-SA 4.0
+    note: Community-written design and strategy guide. Advice and examples, not game rules.
+  - id: ftcdocs
+    name: FTC Docs (ftc-docs.firstinspires.org), official FIRST Tech Challenge programming and control system documentation
+    source_type: docs
+    kind: sphinx
+    base: https://ftc-docs.firstinspires.org/en/latest/
+    selector: "div[role=main]"
+    note: Official FIRST programming, hardware, and control system documentation. Not the game rules; the Competition Manual governs rules.
+  - id: revdocs
+    name: REV Robotics documentation (docs.revrobotics.com)
+    source_type: vendor_docs
+    kind: sitemap
+    base: https://docs.revrobotics.com/
+    selector: main
+    markdown_suffix: ".md"
+    include_sitemaps: ["duo", "ftc-kickoff", "rev-hardware-client", "rev-crossover-products", "docs.revrobotics.com/sitemap-pages.xml"]
+    note: Vendor documentation for REV DUO hardware and the Control Hub. Product guidance, not game rules.

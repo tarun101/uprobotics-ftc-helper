@@ -6,6 +6,7 @@ Commands
   first        FIRST content only (manual, Team Updates, hub, Q&A)
   youtube      RSS discovery + process pending videos
   backfill     flat-playlist discovery for every channel, then process pending videos
+  web          fetch the documentation websites in config.yaml (gm0, FTC Docs, REV docs) and index them
   reconcile    compare the instance's items with local state and repair
   status       print counts
 
@@ -37,11 +38,12 @@ import requests
 import yaml
 
 import first_sources as fs
+import web_sources as ws
 import youtube_sources as yt
 
 log = logging.getLogger("ftc-index")
 HERE = Path(__file__).resolve().parent
-KEY_RE = re.compile(r"^(manual|team_update|hub|qa|video)--.+--[0-9a-f]{8}\.md$")
+KEY_RE = re.compile(r"^(manual|team_update|hub|qa|video|web)--.+--[0-9a-f]{8}\.md$")
 
 
 # --------------------------------------------------------------------------- config & secrets
@@ -112,9 +114,13 @@ class State:
         self.db.execute("UPDATE units SET last_seen_run=? WHERE unit_id=?", (run_id, unit_id))
         self.db.commit()
 
-    def stale_units(self, source_types: set[str], run_id: str):
+    def stale_units(self, source_types: set[str], run_id: str, prefix: str | None = None):
         q = f"SELECT * FROM units WHERE source_type IN ({','.join('?' * len(source_types))}) AND last_seen_run IS NOT ?"
-        return self.db.execute(q, (*source_types, run_id)).fetchall()
+        args = [*source_types, run_id]
+        if prefix:
+            q += " AND unit_id LIKE ?"
+            args.append(prefix + "%")
+        return self.db.execute(q, args).fetchall()
 
     def delete_unit(self, unit_id: str):
         self.db.execute("DELETE FROM units WHERE unit_id=?", (unit_id,))
@@ -286,7 +292,7 @@ class Indexer:
         self.errors: list[str] = []
         self.uploaded: list[tuple[str, str, str]] = []   # (unit_id, key, cf item id) submitted this run
 
-    def sync_units(self, units: list[fs.Unit], complete_types: set[str] = frozenset()):
+    def sync_units(self, units: list[fs.Unit], complete_types: set[str] = frozenset(), prefix: str | None = None):
         """Upload new/changed units (non-blocking). Old keys of changed units are deleted by finalize()
         once the new item has indexed. Stale units of `complete_types` are deleted right away."""
         seen = set()
@@ -309,7 +315,7 @@ class Indexer:
                     self.state.queue_delete(old["cf_item_id"], old["key"], item.get("id"), u.unit_id)
                 self.state.upsert_unit(u, item.get("id"), self.run_id)
         if complete_types and self.state:
-            for row in self.state.stale_units(set(complete_types), self.run_id):
+            for row in self.state.stale_units(set(complete_types), self.run_id, prefix):
                 log.info("removing stale %s (%s)", row["key"], row["unit_id"])
                 if row["cf_item_id"]:
                     self.cf.delete(row["cf_item_id"])
@@ -355,6 +361,38 @@ class Indexer:
         units = fs.collect_first()
         self.sync_units(units, complete_types={"manual", "team_update", "hub", "qa"})
 
+    # ---- documentation websites
+    def run_web(self, only: list[str] | None = None, max_pages: int | None = None):
+        season_starts = self.cfg["season"]["starts"]
+        if isinstance(season_starts, str):
+            season_starts = date.fromisoformat(season_starts)
+        default_pub = int(datetime.combine(season_starts, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        session = ws.make_session()
+        for raw in self.cfg.get("web_sources", []):
+            src = ws.WebSource(**raw)
+            if only and src.id not in only:
+                continue
+            if max_pages:
+                src.max_pages = max_pages
+            try:
+                units = ws.fetch_units(src, session, default_pub)
+            except Exception as e:
+                self.errors.append(f"web {src.id}: {e}")
+                log.exception("web source %s failed", src.id)
+                continue
+            if len(units) < 10 and not max_pages:
+                self.errors.append(f"web {src.id}: only {len(units)} units; not deleting old ones")
+                self.sync_units(units)
+                continue
+            self.sync_units(units, complete_types={src.source_type}, prefix=f"web:{src.id}:")
+            if self.state:
+                self.state.set(f"web:{src.id}:last", now())
+
+    def web_due(self) -> bool:
+        weekly = datetime.now().weekday() == self.cfg["youtube"]["defaults"]["reconcile_weekday"]
+        never = self.state and any(self.state.get(f"web:{r['id']}:last") is None for r in self.cfg.get("web_sources", []))
+        return bool(weekly or never)
+
     # ---- YouTube
     def discover(self, flat: bool):
         chans = channels_from(self.cfg)
@@ -374,6 +412,8 @@ class Indexer:
                 if not ch.date_ok(d.upload_date):
                     continue
                 if d.via == "rss" and not ch.include_shorts and d.duration is not None and d.duration <= 60:
+                    continue
+                if d.duration is not None and d.duration > self.cfg["youtube"]["defaults"].get("max_duration_seconds", 7200):
                     continue
                 if self.state and self.state.add_video(d):
                     added += 1
@@ -422,6 +462,10 @@ class Indexer:
             elif ch and not ch.title_ok(cap.title):
                 self.state.set_video(vid, "skipped", note="title filter", upload_date=cap.upload_date, title=cap.title)
                 self.stats["skipped"] += 1
+            elif cap.duration > self.cfg["youtube"]["defaults"].get("max_duration_seconds", 7200):
+                self.state.set_video(vid, "skipped", note=f"longer than 2 hours ({cap.duration}s)", upload_date=cap.upload_date, title=cap.title, duration=cap.duration)
+                self.stats["skipped"] += 1
+                log.info("skipped %s: %ds is over the 2-hour cap", vid, cap.duration)
             elif cap.live_status in ("is_live", "is_upcoming"):
                 self.state.set_video(vid, "pending", note="live/upcoming; retry later")
             else:
@@ -479,7 +523,9 @@ def setup_logging(log_dir: Path):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "reconcile", "status"])
+    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "web", "reconcile", "status"])
+    ap.add_argument("--source", nargs="*", help="web: only these source ids")
+    ap.add_argument("--max-pages", type=int, help="web: cap pages per source (testing)")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--out", help="dry run: write units to this directory instead of uploading")
     ap.add_argument("--limit", type=int, help="max videos to process this run")
@@ -528,6 +574,12 @@ def main(argv=None) -> int:
             except Exception as e:
                 ix.errors.append(f"FIRST: {e}")
                 log.exception("FIRST content failed")
+        if args.command == "web" or (args.command == "run" and ix.web_due()):
+            try:
+                ix.run_web(args.source, args.max_pages)
+            except Exception as e:
+                ix.errors.append(f"web: {e}")
+                log.exception("web stage failed")
         if args.command in ("run", "youtube", "backfill"):
             try:
                 weekly = args.command == "backfill" or (
@@ -543,7 +595,7 @@ def main(argv=None) -> int:
             except Exception as e:
                 ix.errors.append(f"YouTube: {e}")
                 log.exception("YouTube stage failed")
-        if args.command in ("run", "first", "youtube", "backfill"):
+        if args.command in ("run", "first", "youtube", "backfill", "web"):
             try:
                 ix.finalize()
             except Exception as e:

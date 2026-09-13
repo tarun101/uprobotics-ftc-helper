@@ -4,72 +4,274 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UP Robotics FTC Helper</title>
-  <meta name="description" content="Ask a FIRST Tech Challenge 2026-27 (BIOBUZZ) question and get a short answer with links to the exact rule, Team Update, or video moment.">
-  <!-- Cloudflare AI Search UI snippets. Replace 146c9951-a803-43ec-82a5-667148163702 with the instance's public endpoint ID
-       (AI Search > ftc-2026 > Settings > Public Endpoint). -->
+  <meta name="description" content="Ask a FIRST Tech Challenge 2026-27 BIOBUZZ question and get a short answer that links to the exact rule, Team Update, or video moment. A free community tool from UP Robotics.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect x='6' y='6' width='108' height='108' rx='27' fill='%231D2740'/%3E%3Cpath d='M60 24 L92 58 H74 V62 H46 V58 H28 Z' fill='%23F0561D'/%3E%3Crect x='46' y='66' width='28' height='16' rx='5' fill='%23F0561D'/%3E%3Crect x='46' y='88' width='28' height='16' rx='5' fill='%23FFC53D'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
+  <!-- Cloudflare AI Search chat bubble -->
   <script type="module" src="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/assets/v0.0.25/search-snippet.es.js"></script>
   <style>
-    :root { --ink: #1c1c1e; --muted: #5b5b60; --accent: #e8590c; --bg: #fffdf9; --card: #ffffff; --line: #e6e2dc; }
-    @media (prefers-color-scheme: dark) {
-      :root { --ink: #f2f2f4; --muted: #b3b3b8; --accent: #ff8a3d; --bg: #141416; --card: #1e1e21; --line: #2c2c30; }
+    /* UP Robotics design tokens — "clubhouse workshop" */
+    :root {
+      --up-ink: #1D2740; --up-ink-soft: #2C3A5E; --up-blue-700: #1E4BAD; --up-blue-600: #2B59C3; --up-blue-100: #DCE6F9;
+      --up-orange-600: #D14710; --up-orange-500: #F0561D; --up-orange-100: #FCE3D6; --up-yellow-400: #FFC53D; --up-yellow-100: #FFF0CC;
+      --up-green-500: #2F9E62; --up-white: #FFFFFF; --up-paper: #FAF6EE; --up-paper-2: #F1EBDD; --up-gray-800: #38425E; --up-gray-500: #6F7890; --up-line: #E4DECF;
+      --font-display: "Bricolage Grotesque", "Arial Black", sans-serif; --font-body: "Instrument Sans", "Helvetica Neue", sans-serif; --font-mono: "Space Mono", "Courier New", monospace;
+      --shadow-sticker-sm: 2px 2px 0 var(--up-ink); --shadow-sticker: 4px 4px 0 var(--up-ink); --shadow-sticker-lg: 6px 6px 0 var(--up-ink);
+      --radius-md: 10px; --radius-lg: 16px; --radius-pill: 999px; --border-w: 1.5px;
+      --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1.15);
+      --pattern-grid: linear-gradient(rgba(43, 89, 195, 0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(43, 89, 195, 0.07) 1px, transparent 1px);
+      --pattern-grid-inverse: linear-gradient(rgba(245, 242, 233, 0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(245, 242, 233, 0.07) 1px, transparent 1px);
     }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    main { max-width: 720px; margin: 0 auto; padding: 32px 20px 96px; }
-    h1 { font-size: 1.9rem; margin: 0 0 4px; }
-    .sub { color: var(--muted); margin: 0 0 24px; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 0 0 16px; }
-    .card h2 { font-size: 1.05rem; margin: 0 0 8px; }
-    .notice { font-size: 0.95rem; color: var(--muted); }
-    .notice li { margin: 4px 0; }
-    .links a { display: inline-block; margin: 6px 12px 0 0; color: var(--accent); font-weight: 600; text-decoration: none; }
-    .links a:hover { text-decoration: underline; }
-    footer { margin-top: 32px; font-size: 0.85rem; color: var(--muted); }
-    chat-bubble-snippet { --search-snippet-primary-color: var(--accent); --search-snippet-border-radius: 12px; }
-    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-    .examples span { font-size: 0.85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { color-scheme: light; }
+    body { margin: 0; font-family: var(--font-body); font-size: 16px; line-height: 1.55; color: var(--up-gray-800); background: var(--up-paper); -webkit-font-smoothing: antialiased; }
+    h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--up-ink); margin: 0; }
+    a { color: var(--up-blue-700); text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: var(--up-orange-600); }
+    :focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(43, 89, 195, 0.35); border-radius: 6px; }
+    .container { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+    /* header */
+    .site-header { position: sticky; top: 0; z-index: 20; background: var(--up-paper); border-bottom: var(--border-w) solid var(--up-ink); }
+    .site-header .container { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 68px; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--up-ink); }
+    .brand svg { width: 36px; height: 36px; display: block; }
+    .brand .wordmark { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -0.015em; }
+    .brand .wordmark em { font-style: normal; color: var(--up-orange-500); }
+    .brand .tool { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--up-blue-700); margin-left: 6px; padding-left: 12px; border-left: var(--border-w) solid var(--up-line); }
+    .header-links { display: flex; gap: 10px; align-items: center; }
+    .header-links a.plain { font-size: 15px; text-decoration: none; color: var(--up-ink); }
+    .header-links a.plain:hover { color: var(--up-orange-600); }
+
+    /* buttons and pills (sticker system) */
+    .btn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-body); font-weight: 600; font-size: 16px; line-height: 1; padding: 14px 22px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-orange-500); color: #fff; text-decoration: none; box-shadow: var(--shadow-sticker); cursor: pointer; transition: transform 120ms var(--ease-snap), box-shadow 120ms var(--ease-snap), background 120ms; }
+    .btn:hover { background: var(--up-orange-600); color: #fff; transform: translate(-1px, -1px); box-shadow: var(--shadow-sticker-lg); }
+    .btn:active { transform: translate(2px, 2px); box-shadow: none; }
+    .btn.secondary { background: var(--up-white); color: var(--up-ink); }
+    .btn.secondary:hover { background: var(--up-paper-2); color: var(--up-ink); }
+    .btn.lg { font-size: 18px; padding: 16px 26px; }
+    .btn.sm { font-size: 14px; padding: 10px 16px; box-shadow: var(--shadow-sticker-sm); }
+    .pill { display: inline-block; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; padding: 6px 12px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-yellow-400); color: var(--up-ink); box-shadow: var(--shadow-sticker-sm); }
+    .pill.blue { background: var(--up-blue-100); }
+    .pill.ink { background: var(--up-ink); color: #F5F2E9; }
+    .kicker { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--up-blue-700); margin: 0 0 8px; }
+    .kicker.yellow { color: var(--up-yellow-400); }
+
+    /* hero */
+    .hero { background-color: var(--up-paper); background-image: var(--pattern-grid); background-size: 24px 24px; border-bottom: var(--border-w) solid var(--up-ink); }
+    .hero .container { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px; align-items: center; padding: 64px 24px; }
+    .hero-copy { display: flex; flex-direction: column; gap: 22px; align-items: flex-start; }
+    .hero h1 { font-size: clamp(40px, 5.4vw, 72px); line-height: 1.05; }
+    .hero h1 em { font-style: normal; color: var(--up-orange-500); }
+    .hero-sub { margin: 0; font-size: 18px; max-width: 520px; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 14px; }
+    .hero-side { display: grid; gap: 18px; }
+    .sticker { background: var(--up-white); border: 2px solid var(--up-ink); border-radius: var(--radius-lg); box-shadow: var(--shadow-sticker-lg); padding: 22px 24px; }
+    .sticker.tilt-a { transform: rotate(1.2deg); }
+    .sticker.tilt-b { transform: rotate(-0.8deg); }
+    .sticker .q { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -0.015em; color: var(--up-ink); margin: 0 0 10px; }
+    .sticker .a { margin: 0; font-size: 15px; }
+    .sticker .src { display: block; margin-top: 12px; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .examples { display: flex; flex-wrap: wrap; gap: 10px; }
+    .examples button { font-family: var(--font-body); font-size: 14px; padding: 8px 14px; border-radius: var(--radius-pill); border: var(--border-w) solid var(--up-ink); background: var(--up-white); color: var(--up-ink); cursor: pointer; box-shadow: var(--shadow-sticker-sm); transition: transform 120ms var(--ease-snap), box-shadow 120ms var(--ease-snap); }
+    .examples button:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-sticker); }
+    .examples button:active { transform: translate(2px, 2px); box-shadow: none; }
+
+    /* sections */
+    .section { padding: 56px 0; }
+    .section h2 { font-size: 36px; margin: 0 0 8px; }
+    .lede { margin: 0 0 8px; font-size: 17px; max-width: 640px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 28px; margin-top: 32px; }
+    .card { background: var(--up-white); border: var(--border-w) solid var(--up-ink); border-radius: var(--radius-lg); box-shadow: var(--shadow-sticker); padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+    .card h3 { font-size: 22px; }
+    .card p { margin: 0; font-size: 15px; }
+    .card .links { margin-top: auto; padding-top: 6px; font-size: 15px; }
+    .card .links a { display: block; text-decoration: none; margin-top: 4px; }
+    .card .links a:hover { text-decoration: underline; }
+
+    .band-sunken { background: var(--up-paper-2); border-top: var(--border-w) solid var(--up-ink); border-bottom: var(--border-w) solid var(--up-ink); }
+    .notice { background: var(--up-yellow-100); border: var(--border-w) solid var(--up-ink); border-radius: var(--radius-md); box-shadow: var(--shadow-sticker); padding: 20px 24px; max-width: 760px; }
+    .notice ul { margin: 8px 0 0; padding-left: 20px; }
+    .notice li { margin: 6px 0; }
+
+    .band-dark { background-color: var(--up-ink); background-image: var(--pattern-grid-inverse); background-size: 24px 24px; color: #F5F2E9; }
+    .band-dark .container { padding: 56px 24px; display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 40px; align-items: center; }
+    .band-dark h2 { color: #F5F2E9; font-size: 32px; }
+    .band-dark p { margin: 10px 0 0; max-width: 560px; }
+    .band-dark a { color: var(--up-yellow-400); }
+    .band-dark a:hover { color: #fff; }
+    .steps { display: grid; gap: 14px; }
+    .step { display: flex; gap: 14px; align-items: flex-start; }
+    .step .n { flex: none; font-family: var(--font-mono); font-size: 13px; width: 32px; height: 32px; border-radius: var(--radius-pill); border: var(--border-w) solid #F5F2E9; display: grid; place-items: center; color: var(--up-yellow-400); }
+
+    footer { background: var(--up-ink); color: #F5F2E9; border-top: var(--border-w) solid var(--up-yellow-400); }
+    footer .container { padding: 40px 24px; display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 32px; font-size: 14px; }
+    footer h4 { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--up-yellow-400); margin: 0 0 10px; font-weight: 400; }
+    footer a { color: #F5F2E9; }
+    footer a:hover { color: var(--up-yellow-400); }
+    footer p { margin: 0 0 8px; }
+    footer .legal { color: #C6CBD9; font-size: 13px; }
+    footer .brand { color: #F5F2E9; margin-bottom: 14px; }
+
+    chat-bubble-snippet { --search-snippet-primary-color: #F0561D; --search-snippet-border-radius: 16px; }
+
+    @media (max-width: 860px) {
+      .hero .container { grid-template-columns: 1fr; gap: 36px; padding: 44px 24px; }
+      .hero-side { display: none; }
+      .band-dark .container { grid-template-columns: 1fr; }
+      footer .container { grid-template-columns: 1fr; }
+      .brand .tool { display: none; }
+      .header-links a.plain { display: none; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>UP Robotics FTC Helper</h1>
-    <p class="sub">Ask a 2026-27 <em>BIOBUZZ</em> season question. Answers link to the exact rule, Team Update, or video moment.</p>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="https://www.uprobotics.tech/">
+        <svg viewBox="0 0 120 120" role="img" aria-label="UP Robotics"><rect x="6" y="6" width="108" height="108" rx="27" fill="#1D2740"></rect><path d="M60 24 L92 58 H74 V62 H46 V58 H28 Z" fill="#F0561D"></path><rect x="46" y="66" width="28" height="16" rx="5" fill="#F0561D"></rect><rect x="46" y="88" width="28" height="16" rx="5" fill="#FFC53D"></rect></svg>
+        <span class="wordmark"><em>UP</em> ROBOTICS</span>
+        <span class="tool">FTC Helper</span>
+      </a>
+      <nav class="header-links">
+        <a class="plain" href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub</a>
+        <a class="plain" href="https://ftcscout.org/" rel="noopener">FTCScout</a>
+        <a class="btn sm" href="#ask" data-open-chat>Ask a question</a>
+      </nav>
+    </div>
+  </header>
 
-    <div class="card">
-      <h2>Ask a question</h2>
-      <p class="notice" style="margin-top:0">Try one of these, or type your own:</p>
-      <div class="examples" aria-label="Example questions">
-        <span>How tall can the robot be?</span>
-        <span>What changed in Team Update 00?</span>
-        <span>What is a STRATEGIC violation?</span>
-        <span>How do I build a mecanum drivetrain?</span>
+  <section class="hero" id="ask">
+    <div class="container">
+      <div class="hero-copy">
+        <span class="pill">FTC 2026-27 · BIOBUZZ™</span>
+        <h1>Ask the rules. Get the <em>exact</em> source.</h1>
+        <p class="hero-sub">Type a question about this season and get a short answer that links straight to the rule in the Competition Manual, the Team Update that changed it, or the moment in a video that shows it.</p>
+        <div class="hero-actions">
+          <a class="btn lg" href="#ask" data-open-chat>Open the chat</a>
+          <a class="btn secondary lg" href="#what">What it knows</a>
+        </div>
+        <div class="examples" aria-label="Example questions">
+          <button type="button" data-open-chat>How tall can the robot be?</button>
+          <button type="button" data-open-chat>What changed in Team Update 00?</button>
+          <button type="button" data-open-chat>What counts as STRATEGIC?</button>
+          <button type="button" data-open-chat>How do I build a mecanum drivetrain?</button>
+        </div>
+        <p class="lede" style="font-size:14px;color:var(--up-gray-500)">The chat opens in the bottom-right corner. Works on a phone.</p>
       </div>
-      <p style="margin:0"><strong>Tap the orange chat button in the bottom-right corner</strong> and ask. Answers come with a link to the exact rule, Team Update, or video moment.</p>
+      <div class="hero-side" aria-hidden="true">
+        <div class="sticker tilt-a">
+          <p class="q">Can I warm up my battery before a match?</p>
+          <p class="a">No. Rule E510 says teams may not heat or cool robot parts above or below the venue's temperature to gain an advantage. Heating batteries is one of the listed examples.</p>
+          <span class="src">Competition Manual V1 · E510</span>
+        </div>
+        <div class="sticker tilt-b">
+          <p class="q">How many motors and servos can we use?</p>
+          <p class="a">Up to 8 motors and 8 servos in total, per rule R503.</p>
+          <span class="src">Competition Manual V1 · R503</span>
+        </div>
+      </div>
     </div>
+  </section>
 
-    <div class="card notice">
-      <h2>Please read</h2>
-      <ul>
-        <li>Not affiliated with or endorsed by <em>FIRST</em>®. <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of FIRST.</li>
-        <li>AI answers can be wrong. Always check the linked source.</li>
-        <li>Don't type personal information.</li>
-        <li>Rules come from the official Competition Manual, Team Updates, and Q&amp;A. Videos are advice and examples, not rules.</li>
-      </ul>
+  <section class="section" id="what">
+    <div class="container">
+      <p class="kicker">What it knows</p>
+      <h2>Every answer points back to a source you can open</h2>
+      <p class="lede">The helper only answers from these sources, and it tells you which one it used. If the sources don't cover your question, it says so.</p>
+      <div class="grid">
+        <div class="card">
+          <span class="pill blue">Rules</span>
+          <h3>Competition Manual and Team Updates</h3>
+          <p>Every rule in the official BIOBUZZ™ manual, indexed by rule number, plus each Team Update the day it is published. When they disagree, the newest Team Update wins.</p>
+          <div class="links"><a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub →</a></div>
+        </div>
+        <div class="card">
+          <span class="pill">Videos</span>
+          <h3>Team and coach videos</h3>
+          <p>Captions from five FTC channels, split into short windows, so a link opens the video at the moment that answers you. Videos are advice and examples, not rules, and older seasons are labeled.</p>
+          <div class="links"><a href="https://www.youtube.com/@FIRSTTechChallenge" rel="noopener">FIRST® Tech Challenge on YouTube →</a></div>
+        </div>
+        <div class="card">
+          <span class="pill blue">Design and code</span>
+          <h3>Design guides and documentation</h3>
+          <p>Game Manual 0 for mechanisms and strategy, FTC Docs for programming and the control system, and REV's documentation for hubs, motors, and sensors.</p>
+          <div class="links"><a href="https://gm0.org/" rel="noopener">Game Manual 0 →</a><a href="https://ftc-docs.firstinspires.org/" rel="noopener">FTC Docs →</a><a href="https://docs.revrobotics.com/" rel="noopener">REV documentation →</a></div>
+        </div>
+      </div>
     </div>
+  </section>
 
-    <div class="card links">
-      <h2>Official sources and tools</h2>
-      <a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub (manual, Team Updates, Q&amp;A)</a>
-      <a href="https://ftcscout.org/" rel="noopener">FTCScout (team and event data)</a>
-      <a href="https://www.uprobotics.tech/" rel="noopener">UP Robotics</a>
+  <section class="band-sunken">
+    <div class="container section">
+      <p class="kicker">Please read</p>
+      <h2 style="font-size:28px">Three things to know before you ask</h2>
+      <div class="notice" style="margin-top:20px">
+        <ul style="margin-top:0">
+          <li><strong>AI answers can be wrong.</strong> Always open the linked source. At an event, the Head Referee and the printed rules decide, not this page.</li>
+          <li><strong>Don't type personal information.</strong> No names, schools, phone numbers, or addresses. Conversations are not saved.</li>
+          <li><strong>Not affiliated with or endorsed by <em>FIRST</em>®.</strong> <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of <em>FIRST</em>. This is a free community tool from UP Robotics.</li>
+        </ul>
+      </div>
     </div>
+  </section>
 
-    <footer>
-      A free community tool from <a href="https://www.uprobotics.tech/" style="color:var(--accent)">UP Robotics</a>, Bethesda, MD.
-      Content refreshes nightly. <a href="mailto:tarun@uprobotics.tech?subject=FTC%20Helper%20problem" style="color:var(--accent)">Report a problem</a>.
-    </footer>
-  </main>
+  <section class="band-dark">
+    <div class="container">
+      <div>
+        <p class="kicker yellow">How it works</p>
+        <h2>Built by coaches, refreshed every night</h2>
+        <p>We run an FTC team room in Bethesda, MD and got tired of flipping through a 150-page manual at 9 pm. Every evening the helper re-reads the official game hub, picks up any new Team Update, and adds the latest videos from the channels our students learn from.</p>
+        <p style="margin-top:14px">The code is open: <a href="https://github.com/tarun101/uprobotics-ftc-helper" rel="noopener">github.com/tarun101/uprobotics-ftc-helper</a></p>
+      </div>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><div><strong>Ask</strong> in plain words, like you'd ask a mentor.</div></div>
+        <div class="step"><span class="n">2</span><div><strong>Read</strong> the short answer and the rule number.</div></div>
+        <div class="step"><span class="n">3</span><div><strong>Open the link</strong> and check the exact wording yourself.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <div>
+        <a class="brand" href="https://www.uprobotics.tech/">
+          <svg viewBox="0 0 120 120" role="img" aria-label="UP Robotics"><rect x="6" y="6" width="108" height="108" rx="27" fill="#F5F2E9"></rect><path d="M60 24 L92 58 H74 V62 H46 V58 H28 Z" fill="#F0561D"></path><rect x="46" y="66" width="28" height="16" rx="5" fill="#F0561D"></rect><rect x="46" y="88" width="28" height="16" rx="5" fill="#FFC53D"></rect></svg>
+          <span class="wordmark" style="color:#F5F2E9"><em>UP</em> ROBOTICS</span>
+        </a>
+        <p class="legal">After-school robotics, coding, and STEM programs for kids in grades K–12 in downtown Bethesda, MD. The FTC Helper is a free community tool. Not affiliated with or endorsed by <em>FIRST</em>®. <em>FIRST</em>®, <em>FIRST</em>® Tech Challenge, and BIOBUZZ™ are trademarks of <em>FIRST</em>. Manual text and video captions belong to their authors and are indexed only to link you back to them.</p>
+      </div>
+      <div>
+        <h4>Sources</h4>
+        <p><a href="https://ftc-resources.firstinspires.org/ftc/game" rel="noopener">Official game hub</a></p>
+        <p><a href="https://ftcscout.org/" rel="noopener">FTCScout</a></p>
+        <p><a href="https://gm0.org/" rel="noopener">Game Manual 0</a></p>
+        <p><a href="https://ftc-docs.firstinspires.org/" rel="noopener">FTC Docs</a></p>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <p><a href="mailto:tarun@uprobotics.tech?subject=FTC%20Helper%20problem">Report a problem</a></p>
+        <p><a href="https://www.uprobotics.tech/" rel="noopener">uprobotics.tech</a></p>
+        <p><a href="https://github.com/tarun101/uprobotics-ftc-helper" rel="noopener">Source code</a></p>
+      </div>
+    </div>
+  </footer>
 
   <chat-bubble-snippet api-url="https://146c9951-a803-43ec-82a5-667148163702.search.ai.cloudflare.com/" placeholder="Ask an FTC 2026-27 question…" chat-query-rewrite></chat-bubble-snippet>
+
+  <script>
+    // "Ask a question" buttons open the chat bubble when the widget exposes its toggle; otherwise they just scroll to the top.
+    function openChat() {
+      var el = document.querySelector('chat-bubble-snippet');
+      var root = el && el.shadowRoot;
+      var toggle = root && (root.querySelector('button[aria-label*="chat" i], button[aria-label*="open" i], .chat-bubble-toggle, button'));
+      if (toggle) { try { toggle.click(); return true; } catch (e) {} }
+      return false;
+    }
+    document.querySelectorAll('[data-open-chat]').forEach(function (b) {
+      b.addEventListener('click', function (e) { if (openChat()) { e.preventDefault(); } });
+    });
+  </script>
 </body>
 </html>
