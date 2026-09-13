@@ -3,7 +3,7 @@
 #                                          security add-generic-password -s ftc-index -a monitor-ping-url -w
 
 cloudflare:
-  account_id: ""            # Cloudflare account ID (dashboard URL). Not secret, but fill in locally.
+  account_id: "181ef16e10d373bc7ffc49d94d3d814b"   # Cloudflare account ID (dashboard URL). Not secret.
   instance: ftc-2026        # AI Search instance name (default namespace)
 
 paths:
