@@ -27,6 +27,46 @@ const RETRIEVAL_BASE = {
   boost_by: [{ field: "published", direction: "desc" }],
 };
 
+
+// Usage log → Analytics Engine dataset ftc_helper_usage (see wrangler.jsonc USAGE binding).
+// blobs[0]=endpoint, blobs[1]=query (≤2k), blobs[2]=sha256(ip)[:16]
+// doubles[0]=ok, doubles[1]=chunk_count, doubles[2]=duration_ms
+// indexes[0]=ip hash for approximate unique users
+async function hashIp(ip) {
+  const data = new TextEncoder().encode(String(ip || "unknown"));
+  const dig = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+
+function logUsage(env, { endpoint, query, ip, ok, chunkCount, ms }) {
+  if (!env.USAGE || typeof env.USAGE.writeDataPoint !== "function") return;
+  // fire-and-forget; Analytics Engine write is sync API
+  Promise.resolve(hashIp(ip)).then((ipHash) => {
+    try {
+      env.USAGE.writeDataPoint({
+        indexes: [ipHash],
+        blobs: [String(endpoint || ""), String(query || "").slice(0, 2000), ipHash],
+        doubles: [ok ? 1 : 0, Number(chunkCount) || 0, Number(ms) || 0],
+      });
+    } catch { /* never fail the request on logging */ }
+  }).catch(() => {});
+}
+
+
+// Cloudflare chat-page-snippet cites chunk titles from the "# …" header, not our Sources footer.
+// Video windows already carry "Channel: …"; fold that into the title line for display.
+function withChannelInChunkTitles(chunks) {
+  return (chunks || []).map((c) => {
+    const text = c.text || "";
+    const ch = (text.match(/^Channel: (.+)$/m) || [])[1];
+    const t = (text.match(/^# (.+)$/m) || [])[1];
+    if (!ch || !t) return c;
+    if (t.includes(ch)) return c;
+    const newText = text.replace(/^# .+$/m, `# ${t} — ${ch}`);
+    return { ...c, text: newText };
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -49,15 +89,20 @@ export default {
     const query = lastUserMessage(body);
     if (!query) return json({ success: false, errors: [{ message: "no user message" }] }, 400);
 
+    const t0 = Date.now();
     try {
       if (url.pathname === "/api/search") {
         const fused = await retrieve(env, query);
+        fused.chunks = withChannelInChunkTitles(fused.chunks);
+        logUsage(env, { endpoint: "search", query, ip, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
         return json({ success: true, result: { query_kind: "text", search_query: query, ...fused } });
       }
       if (url.pathname === "/api/chat/completions") {
         const fused = await retrieve(env, query);
+        fused.chunks = withChannelInChunkTitles(fused.chunks);
         const raw = await generate(env, body.messages, query, fused.chunks);
         const answer = withVerifiedLinks(raw, fused.chunks);
+        logUsage(env, { endpoint: "chat", query, ip, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
         return json({
           id: `id-${Date.now()}`, object: "chat.completion", created: Math.floor(Date.now() / 1000), model: MODEL,
           choices: [{ index: 0, message: { role: "assistant", content: answer.text }, finish_reason: "stop" }],
@@ -66,6 +111,7 @@ export default {
       }
       return json({ success: false, errors: [{ message: "not found" }] }, 404);
     } catch (e) {
+      logUsage(env, { endpoint: url.pathname.replace(/^\/api\//, "") || "api", query, ip, ok: false, chunkCount: 0, ms: Date.now() - t0 });
       return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
     }
   },
@@ -168,10 +214,11 @@ function retrievedSources(chunks) {
   for (const c of chunks) {
     const key = c.item && c.item.key;
     if (!key) continue;
-    if (!byKey.has(key)) byKey.set(key, { title: null, url: null, moment: null });
+    if (!byKey.has(key)) byKey.set(key, { title: null, channel: null, url: null, moment: null });
     const info = byKey.get(key);
     const text = c.text || "";
     const t = text.match(/^# (.+)$/m); if (t && !info.title) info.title = t[1].trim();
+    const ch = text.match(/^Channel: (.+)$/m); if (ch && !info.channel) info.channel = ch[1].trim();
     const l = text.match(/^Link: (\S+)/m); if (l && !info.url) info.url = l[1];
     const lm = text.match(/^Link \(this moment\): (\S+)/m); if (lm && !info.moment) info.moment = lm[1];
   }
@@ -183,13 +230,13 @@ function retrievedSources(chunks) {
     const n = normUrl(url);
     if (seen.has(n)) continue;
     seen.add(n);
-    out.push({ title: info.title.replace(/[\[\]]/g, "").slice(0, 90), url });
+    let label = info.title.replace(/[\[\]]/g, "");
+    if (info.channel) label = `${label} — ${info.channel.replace(/[\[\]]/g, "")}`;
+    out.push({ title: label.slice(0, 120), url });
   }
   return out;
 }
 
-// Reduce any link retrieval did not return to plain text, then append a Sources list built from the
-// retrieved items. Answers that cite nothing (declines, "the sources don't cover this") get no list.
 function withVerifiedLinks(answer, chunks) {
   const allowed = allowedUrls(chunks);
   let removed = 0;

@@ -8,5 +8,6 @@
   "ai_search": [{ "binding": "FTC", "instance_name": "ftc-2026" }],
   "ai": { "binding": "AI" },
   "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
-  "observability": { "enabled": false }
+  "analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "ftc_helper_usage" }],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
 }
