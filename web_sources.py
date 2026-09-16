@@ -4,7 +4,11 @@ Each configured site is fetched page by page (politely, 1 request/second), the m
 converted to Markdown, and each page becomes one item. Discovery:
   * kind "sphinx":  read <base>/searchindex.js (Read the Docs / Sphinx sites) for the page list
   * kind "sitemap": read a sitemap index and the sub-sitemaps whose URL contains one of `include_sitemaps`
-Nothing here follows links beyond the configured site; robots.txt allows crawling on all three sites.
+  * kind "pages":   fetch the explicit `seeds` URLs only (HTML)
+  * kind "hub":     fetch `seeds`, then same-host links whose path starts with one of `include`
+                    (HTML and optional PDFs when allow_pdf is true; binaries/ZIPs skipped)
+  * kind "raw":     fetch `seeds` as plain text (e.g. raw.githubusercontent.com README)
+Nothing here logs in or downloads video/audio. Non-rule sources must set `note` in config.
 """
 from __future__ import annotations
 
@@ -28,14 +32,17 @@ class WebSource:
     id: str
     name: str
     source_type: str
-    kind: str                       # sphinx | sitemap
-    base: str
+    kind: str                       # sphinx | sitemap | pages | hub | raw
+    base: str = ""
     selector: str = "main"
     note: str = ""
     license: str = ""
-    include: list[str] = field(default_factory=list)          # sphinx: docname prefixes to keep (empty = all)
+    include: list[str] = field(default_factory=list)          # sphinx docname prefixes, or hub path prefixes
     include_sitemaps: list[str] = field(default_factory=list) # sitemap: substrings of sub-sitemap URLs to keep
     exclude: list[str] = field(default_factory=list)          # URL substrings to skip
+    seeds: list[str] = field(default_factory=list)            # pages/hub/raw: starting URLs
+    allow_pdf: bool = False                                   # hub: also fetch linked PDFs as items
+    min_items: int = 10                                       # run_web: below this, sync without deleting old
     delay_seconds: float = 1.0
     max_pages: int = 2000
     markdown_suffix: str = ""       # e.g. ".md" for GitBook sites that serve a Markdown copy of every page
@@ -56,10 +63,27 @@ def make_session() -> requests.Session:
 
 # --------------------------------------------------------------------------- discovery
 
+def _host_ok(url: str, base_host: str) -> bool:
+    host = urlparse(url).netloc
+    if not base_host:
+        return bool(host)
+    return host == base_host
+
+
+def _path_included(url: str, include: list[str]) -> bool:
+    if not include:
+        return True
+    path = urlparse(url).path
+    return any(path == p.rstrip("/") or path.startswith(p) for p in include)
+
+
 def discover(src: WebSource, session: requests.Session) -> list[Page]:
-    host = urlparse(src.base).netloc
+    base_host = urlparse(src.base).netloc if src.base else ""
     pages: list[Page] = []
     if src.kind == "sphinx":
+        if not src.base:
+            raise RuntimeError(f"{src.id}: sphinx kind requires base")
+        base_host = urlparse(src.base).netloc
         r = session.get(urljoin(src.base, "searchindex.js"), timeout=60)
         r.raise_for_status()
         m = re.search(r"\"?docnames\"?\s*:\s*\[(.*?)\]", r.text, re.S)
@@ -73,6 +97,9 @@ def discover(src: WebSource, session: requests.Session) -> list[Page]:
                 continue
             pages.append(Page(urljoin(src.base, name + ".html")))
     elif src.kind == "sitemap":
+        if not src.base:
+            raise RuntimeError(f"{src.id}: sitemap kind requires base")
+        base_host = urlparse(src.base).netloc
         r = session.get(urljoin(src.base, "sitemap.xml"), timeout=60)
         r.raise_for_status()
         locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", r.text)
@@ -92,13 +119,71 @@ def discover(src: WebSource, session: requests.Session) -> list[Page]:
                     continue
                 lm = re.search(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", block)
                 pages.append(Page(loc.group(1), _epoch(lm.group(1)) if lm else None))
+    elif src.kind == "pages":
+        if not src.seeds:
+            raise RuntimeError(f"{src.id}: pages kind requires seeds")
+        if not base_host:
+            base_host = urlparse(src.seeds[0]).netloc
+        for u in src.seeds:
+            pages.append(Page(u))
+    elif src.kind == "raw":
+        if not src.seeds:
+            raise RuntimeError(f"{src.id}: raw kind requires seeds")
+        if not base_host:
+            base_host = urlparse(src.seeds[0]).netloc
+        for u in src.seeds:
+            pages.append(Page(u))
+    elif src.kind == "hub":
+        if not src.seeds:
+            raise RuntimeError(f"{src.id}: hub kind requires seeds")
+        if not base_host:
+            base_host = urlparse(src.seeds[0]).netloc
+        seen_seed = set()
+        for seed in src.seeds:
+            if seed in seen_seed:
+                continue
+            seen_seed.add(seed)
+            pages.append(Page(seed))
+            time.sleep(src.delay_seconds)
+            try:
+                r = session.get(seed, timeout=60)
+            except requests.RequestException as e:
+                log.warning("%s: hub seed failed %s: %s", src.id, seed, e)
+                continue
+            if not r.ok or "html" not in r.headers.get("content-type", "").lower():
+                continue
+            soup = BeautifulSoup(r.text, "lxml")
+            for a in soup.select("a[href]"):
+                href = urljoin(seed, a.get("href") or "")
+                p = urlparse(href)
+                if p.scheme not in ("http", "https"):
+                    continue
+                # drop fragments/query for stable ids
+                href = p._replace(fragment="", query="").geturl()
+                if not _host_ok(href, base_host):
+                    continue
+                if src.include and not _path_included(href, src.include) and href.rstrip("/") not in {s.rstrip("/") for s in src.seeds}:
+                    continue
+                pages.append(Page(href))
     else:
         raise RuntimeError(f"{src.id}: unknown kind {src.kind}")
+    seed_hosts = {urlparse(u).netloc for u in src.seeds} if src.seeds else set()
+    seed_urls = {s.rstrip("/") for s in src.seeds}
     seen, out = set(), []
     for p in pages:
-        if urlparse(p.url).netloc != host or any(x in p.url for x in src.exclude) or p.url in seen:
+        host = urlparse(p.url).netloc
+        is_seed = p.url.rstrip("/") in seed_urls
+        if src.kind in ("pages", "raw"):
+            allowed_host = host in seed_hosts or (base_host and host == base_host)
+        else:
+            allowed_host = _host_ok(p.url, base_host)
+        if not allowed_host or p.url in seen:
+            continue
+        if (not is_seed) and any(x in p.url for x in src.exclude):
             continue
         if urlparse(p.url).path in ("", "/") and src.kind == "sitemap":
+            continue
+        if (not is_seed) and src.kind in ("hub", "sitemap") and src.include and not _path_included(p.url, src.include):
             continue
         seen.add(p.url)
         out.append(p)
@@ -251,23 +336,45 @@ def slug(url: str, base: str) -> str:
 
 
 def fetch_items(src: WebSource, session: requests.Session, default_published: int) -> list[Item]:
+    from first_sources import pdf_text  # local import avoids a circular import at module load for non-PDF sources
+
     pages = discover(src, session)
     items: list[Item] = []
     failures = 0
+    base_for_slug = src.base or (src.seeds[0] if src.seeds else "")
     for i, page in enumerate(pages):
+        title, md = "", ""
         try:
-            r = session.get(page.url, timeout=60)
-            if r.status_code != 200 or "html" not in r.headers.get("content-type", "").lower():
-                log.info("%s: skip %s (HTTP %s, %s)", src.id, page.url, r.status_code, r.headers.get("content-type", ""))
+            r = session.get(page.url, timeout=90)
+            ctype = (r.headers.get("content-type") or "").lower()
+            if r.status_code != 200:
+                log.info("%s: skip %s (HTTP %s)", src.id, page.url, r.status_code)
                 continue
-            title, md = html_to_markdown(r.text, src.selector)
-            if src.markdown_suffix:
-                soup_link = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', r.text)
-                md_url = (soup_link.group(1) if soup_link else page.url).rstrip("/") + src.markdown_suffix
-                time.sleep(src.delay_seconds)
-                rm = session.get(md_url, timeout=60)
-                if rm.ok and "markdown" in rm.headers.get("content-type", "").lower() and not rm.text.lstrip().startswith("# Page Not Found"):
-                    md = clean_gitbook_markdown(rm.text)
+            if src.kind == "raw" or ctype.startswith("text/plain") or page.url.endswith(".md"):
+                md = r.text.strip()
+                title = slug(page.url, base_for_slug).replace("-", " ") or src.name
+            elif "pdf" in ctype or r.content.startswith(b"%PDF"):
+                if not src.allow_pdf:
+                    log.info("%s: skip PDF %s (allow_pdf false)", src.id, page.url)
+                    continue
+                text = pdf_text(r.content)
+                if len(text) < 200:
+                    log.info("%s: skip thin PDF %s", src.id, page.url)
+                    continue
+                title = slug(page.url, base_for_slug).replace("-", " ") or "PDF"
+                md = text
+            elif "html" in ctype:
+                title, md = html_to_markdown(r.text, src.selector)
+                if src.markdown_suffix:
+                    soup_link = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', r.text)
+                    md_url = (soup_link.group(1) if soup_link else page.url).rstrip("/") + src.markdown_suffix
+                    time.sleep(src.delay_seconds)
+                    rm = session.get(md_url, timeout=60)
+                    if rm.ok and "markdown" in rm.headers.get("content-type", "").lower() and not rm.text.lstrip().startswith("# Page Not Found"):
+                        md = clean_gitbook_markdown(rm.text)
+            else:
+                log.info("%s: skip %s (%s)", src.id, page.url, ctype or "no content-type")
+                continue
         except requests.RequestException as e:
             failures += 1
             log.warning("%s: fetch failed %s: %s", src.id, page.url, e)
@@ -280,14 +387,14 @@ def fetch_items(src: WebSource, session: requests.Session, default_published: in
         if len(md) < 200:
             continue
         link = page.url.replace("_", "%5F")   # the chat widget italicizes _text_, which would break URLs with underscores
-        head = [f"# {title or slug(page.url, src.base)}", f"Source: {src.name}" + (f" ({src.license})" if src.license else ""),
+        head = [f"# {title or slug(page.url, base_for_slug)}", f"Source: {src.name}" + (f" ({src.license})" if src.license else ""),
                 f"Link: {link}", f"Type: {src.source_type}"]
         if src.note:
             head.append(f"Note: {src.note}")
         body = "\n".join(head) + "\n---\n\n" + md + "\n"
         if len(body.encode("utf-8")) > 3_500_000:
             body = body.encode("utf-8")[:3_500_000].decode("utf-8", errors="ignore")
-        items.append(Item(item_id=f"web:{src.id}:{slug(page.url, src.base)}", source_type=src.source_type, title=title,
+        items.append(Item(item_id=f"web:{src.id}:{slug(page.url, base_for_slug)}", source_type=src.source_type, title=title,
                           body=body, url=link, published=page.lastmod or default_published))
     log.info("%s: %d items from %d pages (%d fetch failures)", src.id, len(items), len(pages), failures)
     return items

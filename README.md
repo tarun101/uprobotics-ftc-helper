@@ -19,7 +19,7 @@ Mac mini (home internet) — launchd at 23:00 and 05:00 ET
     ├─ FIRST: HTML manual → one Item per rule / section; Team Update PDFs → one Item each; hub → one Item
     ├─ Q&A: FIRST's public answers RSS feed → one Item per answered question (never logs in)
     ├─ YouTube: RSS + yt-dlp captions → one Item (a Window) per 2–3 minute stretch, with a &t= link
-    ├─ docs sites (weekly): gm0, FTC Docs, REV → one Item per page
+    ├─ docs sites (weekly): gm0, FTC Docs, REV, FIRST field/team/event hubs, season overview, community blog/forum, SDK, FTCSIM → one Item per page
     ├─ state.sqlite: what is uploaded, content hashes, video queue
     ├─ Cloudflare AI Search Items API: upload new/changed Items, delete old ones
     ├─ weekly: reconcile the instance with local state, then the 30-question retrieval check
