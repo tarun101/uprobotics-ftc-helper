@@ -8,6 +8,8 @@ converted to Markdown, and each page becomes one item. Discovery:
   * kind "hub":     fetch `seeds`, then same-host links whose path starts with one of `include`
                     (HTML and optional PDFs when allow_pdf is true; binaries/ZIPs skipped)
   * kind "raw":     fetch `seeds` as plain text (e.g. raw.githubusercontent.com README)
+  * kind "rss":     Atom/RSS `seeds` (e.g. Reddit public feeds); entry summary is indexed when HTML/JSON is blocked
+  * kind "discourse_json": category `.json` seeds (Discourse); topic list + per-topic `.json` posts (public, no login)
 Nothing here logs in or downloads video/audio. Non-rule sources must set `note` in config.
 """
 from __future__ import annotations
@@ -32,7 +34,7 @@ class WebSource:
     id: str
     name: str
     source_type: str
-    kind: str                       # sphinx | sitemap | pages | hub | raw
+    kind: str                       # sphinx | sitemap | pages | hub | raw | rss | discourse_json
     base: str = ""
     selector: str = "main"
     note: str = ""
@@ -53,6 +55,8 @@ class WebSource:
 class Page:
     url: str
     lastmod: int | None = None
+    title: str | None = None          # optional prefetched title (rss)
+    body: str | None = None           # optional prefetched markdown/text (rss); skips HTTP when set
 
 
 def make_session() -> requests.Session:
@@ -165,6 +169,85 @@ def discover(src: WebSource, session: requests.Session) -> list[Page]:
                 if src.include and not _path_included(href, src.include) and href.rstrip("/") not in {s.rstrip("/") for s in src.seeds}:
                     continue
                 pages.append(Page(href))
+    elif src.kind == "rss":
+        if not src.seeds:
+            raise RuntimeError(f"{src.id}: rss kind requires seeds")
+        import feedparser
+        if not base_host:
+            base_host = urlparse(src.seeds[0]).netloc
+        for seed in src.seeds:
+            time.sleep(src.delay_seconds)
+            try:
+                r = session.get(seed, timeout=60)
+            except requests.RequestException as e:
+                log.warning("%s: rss seed failed %s: %s", src.id, seed, e)
+                continue
+            if r.status_code == 429:
+                log.warning("%s: rss rate-limited %s; skipping this feed", src.id, seed)
+                continue
+            if not r.ok:
+                log.warning("%s: rss HTTP %s for %s", src.id, r.status_code, seed)
+                continue
+            fp = feedparser.parse(r.content)
+            for e in fp.entries:
+                link = (e.get("link") or "").strip()
+                if not link:
+                    continue
+                title = norm(e.get("title") or "")
+                summary = e.get("summary") or e.get("description") or ""
+                if "<" in summary:
+                    summary = BeautifulSoup(summary, "lxml").get_text("\n")
+                summary = re.sub(r"\n{3,}", "\n\n", summary).strip()
+                published = None
+                for key in ("published_parsed", "updated_parsed"):
+                    tm = e.get(key)
+                    if tm:
+                        try:
+                            published = int(datetime(*tm[:6], tzinfo=timezone.utc).timestamp())
+                        except Exception:
+                            published = None
+                        break
+                pages.append(Page(url=link, lastmod=published, title=title or None, body=summary))  # always prefetched; do not re-fetch Reddit HTML
+    elif src.kind == "discourse_json":
+        if not src.seeds:
+            raise RuntimeError(f"{src.id}: discourse_json kind requires seeds")
+        if not base_host:
+            base_host = urlparse(src.seeds[0]).netloc
+        for seed in src.seeds:
+            # paginate category JSON: seed may be .../60.json or .../60.json?page=0
+            page_no = 0
+            while True:
+                sep = "&" if "?" in seed else "?"
+                # if seed already has page=, replace; else append
+                if "page=" in seed:
+                    cat_url = re.sub(r"([?&])page=\d+", rf"\1page={page_no}", seed)
+                else:
+                    cat_url = f"{seed}{sep}page={page_no}" if page_no else seed
+                time.sleep(src.delay_seconds)
+                try:
+                    r = session.get(cat_url, timeout=60)
+                except requests.RequestException as e:
+                    log.warning("%s: discourse category failed %s: %s", src.id, cat_url, e)
+                    break
+                if not r.ok or "json" not in r.headers.get("content-type", "").lower():
+                    log.warning("%s: discourse category HTTP %s %s", src.id, r.status_code, cat_url)
+                    break
+                data = r.json()
+                topics = (data.get("topic_list") or {}).get("topics") or []
+                if not topics:
+                    break
+                for t in topics:
+                    tid = t.get("id")
+                    slug_t = t.get("slug") or str(tid)
+                    if not tid:
+                        continue
+                    # public topic JSON (no login)
+                    topic_url = f"https://{base_host}/t/{slug_t}/{tid}.json"
+                    pages.append(Page(url=topic_url, title=norm(t.get("title") or "") or None))
+                more = (data.get("topic_list") or {}).get("more_topics_url")
+                page_no += 1
+                if not more or len(pages) >= src.max_pages:
+                    break
     else:
         raise RuntimeError(f"{src.id}: unknown kind {src.kind}")
     seed_hosts = {urlparse(u).netloc for u in src.seeds} if src.seeds else set()
@@ -173,7 +256,7 @@ def discover(src: WebSource, session: requests.Session) -> list[Page]:
     for p in pages:
         host = urlparse(p.url).netloc
         is_seed = p.url.rstrip("/") in seed_urls
-        if src.kind in ("pages", "raw"):
+        if src.kind in ("pages", "raw", "rss"):
             allowed_host = host in seed_hosts or (base_host and host == base_host)
         else:
             allowed_host = _host_ok(p.url, base_host)
@@ -330,7 +413,8 @@ def clean_gitbook_markdown(text: str) -> str:
 
 def slug(url: str, base: str) -> str:
     path = url[len(base):] if url.startswith(base) else urlparse(url).path
-    path = re.sub(r"\.html?$", "", path).strip("/")
+    path = re.sub(r"\.html?$", "", path)
+    path = re.sub(r"\.json$", "", path).strip("/")
     path = re.sub(r"/(index)$", "", path) or "index"
     return re.sub(r"[^A-Za-z0-9._-]+", "-", path).strip("-")[:80]
 
@@ -345,36 +429,63 @@ def fetch_items(src: WebSource, session: requests.Session, default_published: in
     for i, page in enumerate(pages):
         title, md = "", ""
         try:
-            r = session.get(page.url, timeout=90)
-            ctype = (r.headers.get("content-type") or "").lower()
-            if r.status_code != 200:
-                log.info("%s: skip %s (HTTP %s)", src.id, page.url, r.status_code)
-                continue
-            if src.kind == "raw" or ctype.startswith("text/plain") or page.url.endswith(".md"):
-                md = r.text.strip()
-                title = slug(page.url, base_for_slug).replace("-", " ") or src.name
-            elif "pdf" in ctype or r.content.startswith(b"%PDF"):
-                if not src.allow_pdf:
-                    log.info("%s: skip PDF %s (allow_pdf false)", src.id, page.url)
+            if page.body is not None:
+                title = page.title or slug(page.url, base_for_slug).replace("-", " ")
+                md = page.body.strip()
+            elif src.kind == "discourse_json" or (page.url.endswith(".json") and "reddit.com" not in page.url):
+                r = session.get(page.url, timeout=90)
+                ctype = (r.headers.get("content-type") or "").lower()
+                if r.status_code != 200 or "json" not in ctype:
+                    log.info("%s: skip %s (HTTP %s, %s)", src.id, page.url, r.status_code, ctype)
                     continue
-                text = pdf_text(r.content)
-                if len(text) < 200:
-                    log.info("%s: skip thin PDF %s", src.id, page.url)
+                data = r.json()
+                if isinstance(data, dict) and "post_stream" in data:
+                    title = norm(data.get("title") or page.title or "")
+                    posts = (data.get("post_stream") or {}).get("posts") or []
+                    parts = []
+                    for post in posts[:12]:
+                        cooked = post.get("cooked") or ""
+                        text_p = BeautifulSoup(cooked, "lxml").get_text("\n") if cooked else (post.get("raw") or "")
+                        text_p = re.sub(r"\n{3,}", "\n\n", text_p).strip()
+                        if not text_p:
+                            continue
+                        who = post.get("username") or "user"
+                        parts.append(f"**@{who}:**\n\n{text_p}")
+                    md = "\n\n---\n\n".join(parts)
+                else:
+                    log.info("%s: skip unrecognized Discourse JSON %s", src.id, page.url)
                     continue
-                title = slug(page.url, base_for_slug).replace("-", " ") or "PDF"
-                md = text
-            elif "html" in ctype:
-                title, md = html_to_markdown(r.text, src.selector)
-                if src.markdown_suffix:
-                    soup_link = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', r.text)
-                    md_url = (soup_link.group(1) if soup_link else page.url).rstrip("/") + src.markdown_suffix
-                    time.sleep(src.delay_seconds)
-                    rm = session.get(md_url, timeout=60)
-                    if rm.ok and "markdown" in rm.headers.get("content-type", "").lower() and not rm.text.lstrip().startswith("# Page Not Found"):
-                        md = clean_gitbook_markdown(rm.text)
             else:
-                log.info("%s: skip %s (%s)", src.id, page.url, ctype or "no content-type")
-                continue
+                r = session.get(page.url, timeout=90)
+                ctype = (r.headers.get("content-type") or "").lower()
+                if r.status_code != 200:
+                    log.info("%s: skip %s (HTTP %s)", src.id, page.url, r.status_code)
+                    continue
+                if src.kind == "raw" or ctype.startswith("text/plain") or page.url.endswith(".md"):
+                    md = r.text.strip()
+                    title = slug(page.url, base_for_slug).replace("-", " ") or src.name
+                elif "pdf" in ctype or r.content.startswith(b"%PDF"):
+                    if not src.allow_pdf:
+                        log.info("%s: skip PDF %s (allow_pdf false)", src.id, page.url)
+                        continue
+                    text_p = pdf_text(r.content)
+                    if len(text_p) < 200:
+                        log.info("%s: skip thin PDF %s", src.id, page.url)
+                        continue
+                    title = slug(page.url, base_for_slug).replace("-", " ") or "PDF"
+                    md = text_p
+                elif "html" in ctype:
+                    title, md = html_to_markdown(r.text, src.selector)
+                    if src.markdown_suffix:
+                        soup_link = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', r.text)
+                        md_url = (soup_link.group(1) if soup_link else page.url).rstrip("/") + src.markdown_suffix
+                        time.sleep(src.delay_seconds)
+                        rm = session.get(md_url, timeout=60)
+                        if rm.ok and "markdown" in rm.headers.get("content-type", "").lower() and not rm.text.lstrip().startswith("# Page Not Found"):
+                            md = clean_gitbook_markdown(rm.text)
+                else:
+                    log.info("%s: skip %s (%s)", src.id, page.url, ctype or "no content-type")
+                    continue
         except requests.RequestException as e:
             failures += 1
             log.warning("%s: fetch failed %s: %s", src.id, page.url, e)
@@ -384,9 +495,14 @@ def fetch_items(src: WebSource, session: requests.Session, default_published: in
         finally:
             if i < len(pages) - 1:
                 time.sleep(src.delay_seconds)
-        if len(md) < 200:
+        min_len = 80 if src.kind in ("rss", "discourse_json") else 200
+        if len(md) < min_len:
             continue
-        link = page.url.replace("_", "%5F")   # the chat widget italicizes _text_, which would break URLs with underscores
+        # Prefer the human HTML topic URL in headers for Discourse JSON fetches
+        display_url = page.url
+        if display_url.endswith(".json"):
+            display_url = display_url[:-5]
+        link = display_url.replace("_", "%5F")
         head = [f"# {title or slug(page.url, base_for_slug)}", f"Source: {src.name}" + (f" ({src.license})" if src.license else ""),
                 f"Link: {link}", f"Type: {src.source_type}"]
         if src.note:

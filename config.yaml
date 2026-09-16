@@ -161,7 +161,42 @@ web_sources:
     min_items: 1
     note: Third-party FTC simulator product pages. Practice tool documentation, not game rules. Some page chrome may mention CDN blocks on restricted networks.
 
-# Skipped from BIOBUZZ digest (do not index):
-# - https://ftc-events.firstinspires.org/2026 — site forbids scraping webpages for event data (robots/HTML comment);
-#   landing HTML is a thin season shell; use the official Events API instead if results are needed later.
-# - Reddit, Discord, Chief Delphi, FTCScout, Hive Vision — community watchlist only, never as rule proof.
+
+  # --- Community watchlist (Tarun override 2026-09-16). Discovery/strategy ONLY — never rule proof. ---
+  - id: reddit-ftc-new
+    name: Reddit r/FTC new posts (public Atom feed)
+    source_type: community_watchlist
+    kind: rss
+    base: https://www.reddit.com/
+    seeds: ["https://www.reddit.com/r/FTC/new/.rss"]
+    min_items: 5
+    max_pages: 50
+    delay_seconds: 2.0
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial r/FTC discussion via public Reddit Atom feed (JSON/HTML often blocked). Not affiliated with FIRST."
+  - id: reddit-ftc-biobuzz
+    name: Reddit r/FTC BIOBUZZ search (public Atom feed)
+    source_type: community_watchlist
+    kind: rss
+    base: https://www.reddit.com/
+    seeds: ["https://www.reddit.com/r/FTC/search.rss?q=BIOBUZZ&restrict_sr=1&sort=new"]
+    min_items: 1
+    max_pages: 50
+    delay_seconds: 2.0
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial r/FTC BIOBUZZ search via public Reddit Atom feed. May 429 under rate limits; not affiliated with FIRST."
+  - id: chief-delphi-ftc
+    name: Chief Delphi — FIRST Tech Challenge category (public Discourse JSON)
+    source_type: community_watchlist
+    kind: discourse_json
+    base: https://www.chiefdelphi.com/
+    seeds: ["https://www.chiefdelphi.com/c/other/first-tech-challenge/60.json"]
+    min_items: 5
+    max_pages: 60
+    delay_seconds: 1.5
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial Chief Delphi FTC category via public Discourse JSON (no login). Not game rules."
+
+# Skipped from BIOBUZZ digest / watchlist (do not index):
+# - https://ftc-events.firstinspires.org/2026 — site forbids scraping webpages for event data; thin JS shell; use Events API.
+# - Unofficial FTC Discord (discord.com/invite/ftc) — invite landing has only OG title/description; channel text requires Discord login/client.
+# - https://ftcscout.org/ — SvelteKit SPA shell only (~2KB HTML); guessed REST paths 404; GraphQL CSRF-blocked without browser client.
+# - Hive Vision — still watchlist-only until field-validated (explicitly excluded).
+# Reddit listing JSON (/new.json, search.json) is often 403 without browser cookies; public .rss feeds are used instead when available.

@@ -13,7 +13,7 @@ a Team Update, a Q&A entry, the game hub, a YouTube video, or a page of a design
 _Avoid_: document, page (when the origin is meant)
 
 **Source type**:
-The category of a Source: manual, team_update, qa, hub, video, guide, docs, vendor_docs, plus digest additions (field_resources, team_resources, event_resources, season_overview, community_blog, community_forum, sdk_docs, simulator_docs). See docs/biobuzz-digest-sources.md.
+The category of a Source: manual, team_update, qa, hub, video, guide, docs, vendor_docs, plus digest additions (field_resources, team_resources, event_resources, season_overview, community_blog, community_forum, sdk_docs, simulator_docs, community_watchlist). See docs/biobuzz-digest-sources.md.
 _Avoid_: kind, category
 
 **Item**:
