@@ -30,6 +30,7 @@ const RETRIEVAL_BASE = {
 
 // Usage log → Analytics Engine dataset ftc_helper_usage (see wrangler.jsonc USAGE binding).
 // blobs[0]=endpoint, blobs[1]=query (≤2k), blobs[2]=sha256(ip)[:16]
+// blobs[3]=CF-IPCountry (ISO), blobs[4]=cf.colo (PoP)
 // doubles[0]=ok, doubles[1]=chunk_count, doubles[2]=duration_ms
 // indexes[0]=ip hash for approximate unique users
 async function hashIp(ip) {
@@ -38,14 +39,20 @@ async function hashIp(ip) {
   return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
-function logUsage(env, { endpoint, query, ip, ok, chunkCount, ms }) {
+function logUsage(env, { endpoint, query, ip, country, colo, ok, chunkCount, ms }) {
   if (!env.USAGE || typeof env.USAGE.writeDataPoint !== "function") return;
   // fire-and-forget; Analytics Engine write is sync API
   Promise.resolve(hashIp(ip)).then((ipHash) => {
     try {
       env.USAGE.writeDataPoint({
         indexes: [ipHash],
-        blobs: [String(endpoint || ""), String(query || "").slice(0, 2000), ipHash],
+        blobs: [
+          String(endpoint || ""),
+          String(query || "").slice(0, 2000),
+          ipHash,
+          String(country || ""),
+          String(colo || ""),
+        ],
         doubles: [ok ? 1 : 0, Number(chunkCount) || 0, Number(ms) || 0],
       });
     } catch { /* never fail the request on logging */ }
@@ -80,6 +87,8 @@ export default {
       return json({ success: false, errors: [{ message: "POST only" }] }, 405);
     }
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const country = (request.cf && request.cf.country) || request.headers.get("cf-ipcountry") || "";
+    const colo = (request.cf && request.cf.colo) || "";
     if (env.RL) {
       const { success } = await env.RL.limit({ key: ip });
       if (!success) return json({ success: false, errors: [{ code: 60005, message: "rate limited" }] }, 429);
@@ -94,7 +103,7 @@ export default {
       if (url.pathname === "/api/search") {
         const fused = await retrieve(env, query);
         fused.chunks = withChannelInChunkTitles(fused.chunks);
-        logUsage(env, { endpoint: "search", query, ip, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
+        logUsage(env, { endpoint: "search", query, ip, country, colo, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
         return json({ success: true, result: { query_kind: "text", search_query: query, ...fused } });
       }
       if (url.pathname === "/api/chat/completions") {
@@ -102,7 +111,7 @@ export default {
         fused.chunks = withChannelInChunkTitles(fused.chunks);
         const raw = await generate(env, body.messages, query, fused.chunks);
         const answer = withVerifiedLinks(raw, fused.chunks);
-        logUsage(env, { endpoint: "chat", query, ip, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
+        logUsage(env, { endpoint: "chat", query, ip, country, colo, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
         return json({
           id: `id-${Date.now()}`, object: "chat.completion", created: Math.floor(Date.now() / 1000), model: MODEL,
           choices: [{ index: 0, message: { role: "assistant", content: answer.text }, finish_reason: "stop" }],
@@ -111,7 +120,7 @@ export default {
       }
       return json({ success: false, errors: [{ message: "not found" }] }, 404);
     } catch (e) {
-      logUsage(env, { endpoint: url.pathname.replace(/^\/api\//, "") || "api", query, ip, ok: false, chunkCount: 0, ms: Date.now() - t0 });
+      logUsage(env, { endpoint: url.pathname.replace(/^\/api\//, "") || "api", query, ip, country, colo, ok: false, chunkCount: 0, ms: Date.now() - t0 });
       return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
     }
   },
