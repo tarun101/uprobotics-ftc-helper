@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -430,7 +430,43 @@ class Indexer:
         return bool(weekly or never)
 
     # ---- YouTube
+    def youtube_blocked_until(self) -> datetime | None:
+        """If YouTube rate-limited us, meta youtube:blocked_until holds an ISO UTC resume time."""
+        if not self.state:
+            return None
+        raw = self.state.get("youtube:blocked_until")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    def youtube_cooling_down(self) -> bool:
+        until = self.youtube_blocked_until()
+        if not until:
+            return False
+        now_utc = datetime.now(timezone.utc)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        if now_utc < until:
+            log.info("YouTube cooling down until %s UTC (skipping discovery/captions)", until.isoformat())
+            return True
+        self.state.set("youtube:blocked_until", "")
+        log.info("YouTube cooldown expired; resuming")
+        return False
+
+    def mark_youtube_blocked(self, reason: str):
+        hours = float(self.cfg["youtube"]["defaults"].get("block_cooldown_hours", 3))
+        until = datetime.now(timezone.utc) + timedelta(hours=hours)
+        if self.state:
+            self.state.set("youtube:blocked_until", until.isoformat(timespec="seconds"))
+        log.error("YouTube rate limit / bot check (%s); cooling down %sh until %s UTC",
+                  reason, hours, until.isoformat(timespec="seconds"))
+
     def discover(self, flat: bool):
+        if self.youtube_cooling_down():
+            return 0
         chans = channels_from(self.cfg)
         added = 0
         for ch in chans:
@@ -471,6 +507,8 @@ class Indexer:
         if not self.state:
             log.info("dry run without state: nothing pending to process")
             return
+        if self.youtube_cooling_down():
+            return
         chans = {c.id: c for c in channels_from(self.cfg)}
         lo, hi = self.cfg["youtube"]["defaults"]["delay_seconds"]
         workdir = Path(self.cfg["paths"]["state_dir"]) / "captions"
@@ -498,7 +536,7 @@ class Indexer:
                     self.state.set_video(vid, "pending", note=f"blocked x{prior + 1}; {str(e)[:120]}")
                 if blocked_streak >= 2:
                     self.errors.append(f"YouTube blocked at {vid}: {e}")
-                    log.error("YouTube rate limit / bot check on 2 consecutive videos (%s); stopping for today", vid)
+                    self.mark_youtube_blocked(f"2 consecutive at {vid}")
                     return
                 log.warning("YouTube 429 / bot check at %s; pausing 90 s and trying the next video", vid)
                 time.sleep(90)
@@ -607,6 +645,7 @@ def main(argv=None) -> int:
         for k, v in sorted(st.counts().items()):
             print(f"{k:24} {v}")
         print(f"{'last_reconcile':24} {st.get('last_reconcile', '-')}")
+        print(f"{'youtube:blocked_until':24} {st.get('youtube:blocked_until') or '-'}")
         return 0
 
     if not dry:  # a dry run touches nothing shared, so it may overlap a live run
@@ -654,7 +693,7 @@ def main(argv=None) -> int:
                 ix.process_pending(limit)
             except yt.Blocked as e:
                 ix.errors.append(f"YouTube blocked: {e}")
-                log.error("YouTube blocked during discovery: %s", e)
+                ix.mark_youtube_blocked(f"discovery: {e}")
             except Exception as e:
                 ix.errors.append(f"YouTube: {e}")
                 log.exception("YouTube stage failed")

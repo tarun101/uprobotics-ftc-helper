@@ -144,8 +144,8 @@ then deletes the old key. A weekly reconcile compares the instance's item list w
 
 ## YouTube politeness
 
-One video at a time, one caption file per video, 10–25 s random delay, at most 150 videos per run, stop for the day on
-HTTP 429 or a bot check. Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
+One video at a time, one caption file per video, 60 s delay, at most 150 videos per run. Two consecutive HTTP 429 /
+bot checks set `youtube:blocked_until` (~3 hours); later runs skip YouTube until then (launchd also every 3 hours). Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
 they have ended.
 
 ## License

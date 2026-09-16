@@ -21,7 +21,8 @@ youtube:
     include_streams: true
     backfill_per_day: 150   # max videos fetched per run
     max_duration_seconds: 7200   # skip videos and streams longer than 2 hours (Tarun, 2026-09-12)
-    delay_seconds: [10, 25] # random pause between videos (5–15 s drew an HTTP 429 after ~120 fetches on 2026-09-12)
+    delay_seconds: [60, 60] # pause between videos (10–25 s still hit 429; Tarun 2026-09-16: slow to 60s)
+    block_cooldown_hours: 3  # after 2 consecutive 429s, skip YouTube until this many hours later
     reconcile_weekday: 6    # Sunday: weekly flat-playlist rediscovery + item reconcile
   channels:
     - { name: FIRST Tech Challenge, id: UCkWMXdRQr5yoZRz7gFYyRcw }
