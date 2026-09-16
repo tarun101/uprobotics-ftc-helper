@@ -68,3 +68,135 @@ web_sources:
     markdown_suffix: ".md"
     include_sitemaps: ["duo", "ftc-kickoff", "rev-hardware-client", "rev-crossover-products", "docs.revrobotics.com/sitemap-pages.xml"]
     note: Vendor documentation for REV DUO hardware and the Control Hub. Product guidance, not game rules.
+
+  # --- BIOBUZZ digest additions (2026-09-16). Advice/docs/resources — not Competition Manual rules. ---
+  - id: first-field
+    name: FIRST Playing Field Resources (ftc-resources field hub + linked field PDFs)
+    source_type: field_resources
+    kind: hub
+    base: https://ftc-resources.firstinspires.org/
+    seeds: ["https://ftc-resources.firstinspires.org/ftc/field"]
+    include: ["/ftc/field"]
+    allow_pdf: true
+    exclude: [".zip", "field-cad"]
+    selector: "body"
+    min_items: 1
+    note: Official FIRST playing-field setup and CAD hub. Resource PDFs and guides, not game rules; the Competition Manual governs rules.
+  - id: first-team
+    name: FIRST Robot and Team Resources (2026-27 / archive 2027)
+    source_type: team_resources
+    kind: hub
+    base: https://ftc-resources.firstinspires.org/
+    seeds: ["https://ftc-resources.firstinspires.org/ftc/archive/2027/team"]
+    include: ["/ftc/archive/2027/team"]
+    allow_pdf: true
+    selector: "body"
+    min_items: 1
+    note: Official FIRST robot and team resource hub for the current season archive. Advice and printable resources, not game rules.
+  - id: first-event
+    name: FIRST Event Resources and Materials (2026-27 / archive 2027)
+    source_type: event_resources
+    kind: hub
+    base: https://ftc-resources.firstinspires.org/
+    seeds: ["https://ftc-resources.firstinspires.org/ftc/archive/2027/event"]
+    include: ["/ftc/archive/2027/event"]
+    allow_pdf: true
+    selector: "body"
+    min_items: 1
+    note: Official FIRST event operations resources (inspection, networking, league guides). Event logistics docs, not game rules.
+  - id: first-season-overview
+    name: Official FIRST Tech Challenge Game and Season overview (firstinspires.org)
+    source_type: season_overview
+    kind: pages
+    base: https://www.firstinspires.org/
+    seeds: ["https://www.firstinspires.org/programs/ftc/game-and-season"]
+    selector: "main"
+    min_items: 1
+    note: Official FIRST marketing/season overview page. Program information, not the Competition Manual.
+  - id: first-community-blog
+    name: FIRST Community Blog — FTC topic posts
+    source_type: community_blog
+    kind: hub
+    base: https://community.firstinspires.org/
+    seeds: ["https://community.firstinspires.org/topic/ftc"]
+    exclude: ["/topic/", "/author/", "/tag/", "/all/", "/programs", "subscribe", "/fll", "/frc", "/featured"]
+    selector: "article"
+    min_items: 5
+    max_pages: 80
+    note: Official FIRST community blog posts tagged FTC. Announcements and guidance, not game rules.
+  - id: ftc-community-forum
+    name: Official FTC Community Forum (ftc-community.firstinspires.org) public topics
+    source_type: community_forum
+    kind: sitemap
+    base: https://ftc-community.firstinspires.org/
+    include: ["/t/"]
+    exclude: ["/login", "/signup", "/session", "/admin", "/my/"]
+    selector: "div[itemprop=articleBody], .post, main"
+    min_items: 10
+    max_pages: 150
+    delay_seconds: 1.5
+    note: Public Discourse topics from the official FTC community forum (no login). Community Q&A and discussion — advice, not rules.
+  - id: ftc-sdk
+    name: FTC Robot Controller SDK README (raw) + v12.0 release notes
+    source_type: sdk_docs
+    kind: pages
+    base: https://github.com/
+    seeds:
+      - "https://raw.githubusercontent.com/FIRST-Tech-Challenge/FtcRobotController/v12.0/README.md"
+      - "https://github.com/FIRST-Tech-Challenge/FtcRobotController/releases/tag/v12.0"
+    selector: ".markdown-body"
+    min_items: 1
+    note: Official FTC Android/Robot Controller SDK README and current-season (v12.0) release notes. Software docs, not game rules.
+  - id: ftcsim
+    name: FTCSIM (ftcsim.org) public product pages
+    source_type: simulator_docs
+    kind: pages
+    base: https://ftcsim.org/
+    seeds:
+      - "https://ftcsim.org/"
+      - "https://ftcsim.org/educators"
+      - "https://ftcsim.org/competition-fields"
+      - "https://ftcsim.org/eula"
+    selector: "main"
+    min_items: 1
+    note: Third-party FTC simulator product pages. Practice tool documentation, not game rules. Some page chrome may mention CDN blocks on restricted networks.
+
+
+  # --- Community watchlist (Tarun override 2026-09-16). Discovery/strategy ONLY — never rule proof. ---
+  - id: reddit-ftc-new
+    name: Reddit r/FTC new posts (public Atom feed)
+    source_type: community_watchlist
+    kind: rss
+    base: https://www.reddit.com/
+    seeds: ["https://www.reddit.com/r/FTC/new/.rss"]
+    min_items: 5
+    max_pages: 50
+    delay_seconds: 2.0
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial r/FTC discussion via public Reddit Atom feed (JSON/HTML often blocked). Not affiliated with FIRST."
+  - id: reddit-ftc-biobuzz
+    name: Reddit r/FTC BIOBUZZ search (public Atom feed)
+    source_type: community_watchlist
+    kind: rss
+    base: https://www.reddit.com/
+    seeds: ["https://www.reddit.com/r/FTC/search.rss?q=BIOBUZZ&restrict_sr=1&sort=new"]
+    min_items: 1
+    max_pages: 50
+    delay_seconds: 2.0
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial r/FTC BIOBUZZ search via public Reddit Atom feed. May 429 under rate limits; not affiliated with FIRST."
+  - id: chief-delphi-ftc
+    name: Chief Delphi — FIRST Tech Challenge category (public Discourse JSON)
+    source_type: community_watchlist
+    kind: discourse_json
+    base: https://www.chiefdelphi.com/
+    seeds: ["https://www.chiefdelphi.com/c/other/first-tech-challenge/60.json"]
+    min_items: 5
+    max_pages: 60
+    delay_seconds: 1.5
+    note: "COMMUNITY WATCHLIST — discovery/strategy only, NEVER rule proof. Unofficial Chief Delphi FTC category via public Discourse JSON (no login). Not game rules."
+
+# Skipped from BIOBUZZ digest / watchlist (do not index):
+# - https://ftc-events.firstinspires.org/2026 — site forbids scraping webpages for event data; thin JS shell; use Events API.
+# - Unofficial FTC Discord (discord.com/invite/ftc) — invite landing has only OG title/description; channel text requires Discord login/client.
+# - https://ftcscout.org/ — SvelteKit SPA shell only (~2KB HTML); guessed REST paths 404; GraphQL CSRF-blocked without browser client.
+# - Hive Vision — still watchlist-only until field-validated (explicitly excluded).
+# Reddit listing JSON (/new.json, search.json) is often 403 without browser cookies; public .rss feeds are used instead when available.

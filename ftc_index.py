@@ -415,8 +415,9 @@ class Indexer:
                 self.errors.append(f"web {src.id}: {e}")
                 log.exception("web source %s failed", src.id)
                 continue
-            if len(items) < 10 and not max_pages:
-                self.errors.append(f"web {src.id}: only {len(items)} items; not deleting old ones")
+            min_items = getattr(src, "min_items", 10) or 10
+            if len(items) < min_items and not max_pages:
+                self.errors.append(f"web {src.id}: only {len(items)} items (min {min_items}); not deleting old ones")
                 self.sync_items(items)
                 continue
             self.sync_items(items, complete_types={src.source_type}, prefix=f"web:{src.id}:")
