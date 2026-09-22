@@ -100,7 +100,7 @@ export default {
       if (!row) return json({ success: false, errors: [{ message: "not found" }] }, 404);
       try {
         const refreshed = await refreshQuestion(env, row);
-        return json({ success: true, answer: refreshed.answer, answerUpdatedAt: refreshed.answerUpdatedAt });
+        return json({ success: true, answer: refreshed.answer, answerHtml: renderAnswerMarkdown(refreshed.answer), answerUpdatedAt: refreshed.answerUpdatedAt });
       } catch (e) {
         return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
       }
@@ -177,13 +177,14 @@ async function questionPage(env, url, id) {
     answerUpdatedAt = refreshed.answerUpdatedAt;
   }
   const canonical = `${url.origin}/questions/${id}`;
+  const category = categorizeQuestion(row.question);
   const structured = JSON.stringify({
     "@context": "https://schema.org", "@type": "QAPage", mainEntity: {
       "@type": "Question", name: row.question,
       acceptedAnswer: { "@type": "Answer", text: answer },
     },
   }).replace(/</g, "\\u003c");
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${escapeHtml(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').textContent=data.answer;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><p class="category">${escapeHtml(category)}</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${renderAnswerMarkdown(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').innerHTML=data.answerHtml;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
 }
 
 async function previousQuestionsPage(env, url) {
@@ -191,9 +192,12 @@ async function previousQuestionsPage(env, url) {
   const { results = [] } = await env.QUESTIONS.prepare(
     "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY occurred_at DESC LIMIT 100"
   ).all();
-  const items = results.map((row) => `<article><h2><a href="/questions/${row.id}">${escapeHtml(row.question)}</a></h2><p class="updated">${escapeHtml(displayTime(row.occurred_at))}</p><div class="answer">${escapeHtml(row.answer || "Open this question to generate its current, source-linked answer.")}</div></article>`).join("");
+  const grouped = new Map(QUESTION_CATEGORIES.map((category) => [category, []]));
+  for (const row of results) grouped.get(categorizeQuestion(row.question)).push(row);
+  const categoryNav = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<a href="#${categorySlug(category)}">${escapeHtml(category)} <span>${rows.length}</span></a>`).join("");
+  const items = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<section class="category-group" id="${categorySlug(category)}"><h2>${escapeHtml(category)}</h2>${rows.map((row) => `<article><h3><a href="/questions/${row.id}">${escapeHtml(row.question)}</a></h3><p class="updated">${escapeHtml(displayTime(row.occurred_at))}</p><div class="answer">${renderAnswerMarkdown(row.answer || "Open this question to generate its current, source-linked answer.")}</div></article>`).join("")}</section>`).join("");
   const structured = JSON.stringify({ "@context": "https://schema.org", "@type": "ItemList", itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, url: `${url.origin}/questions/${row.id}`, name: row.question })) }).replace(/</g, "\\u003c");
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p><nav class="category-nav" aria-label="Question categories">${categoryNav}</nav>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
 }
 
 async function questionSitemap(env, url) {
@@ -204,10 +208,33 @@ async function questionSitemap(env, url) {
 }
 
 function questionStyles() {
-  return `<style>:root{font-family:system-ui,sans-serif;color:#1d2740;background:#faf6ee;line-height:1.55}body{margin:0}header{display:flex;justify-content:space-between;gap:1rem;padding:1rem max(1.5rem,calc((100% - 72rem)/2));background:#fff;border-bottom:1px solid #e4decf}header a{color:#1e4bad;font-weight:700}main{max-width:52rem;margin:0 auto;padding:3rem 1.5rem 5rem}.eyebrow,.updated,.refresh{font-size:.875rem;color:#6f7890}.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-weight:700}h1{font-size:clamp(2rem,6vw,3.5rem);line-height:1.05}h2{font-size:1.3rem;margin-bottom:.35rem}article,section{background:#fff;border:1px solid #e4decf;border-radius:1rem;padding:1.25rem 1.5rem;margin:1.25rem 0}article h2{margin-top:0}.answer{white-space:pre-wrap;overflow-wrap:anywhere}.intro{font-size:1.125rem}</style>`;
+  return `<style>:root{font-family:system-ui,sans-serif;color:#1d2740;background:#faf6ee;line-height:1.55}body{margin:0}header{display:flex;justify-content:space-between;gap:1rem;padding:1rem max(1.5rem,calc((100% - 72rem)/2));background:#fff;border-bottom:1px solid #e4decf}a{color:#1e4bad}header a{font-weight:700}main{max-width:52rem;margin:0 auto;padding:3rem 1.5rem 5rem}.eyebrow,.updated,.refresh{font-size:.875rem;color:#6f7890}.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-weight:700}.category{display:inline-block;margin:0;padding:.25rem .65rem;border-radius:99px;background:#dce7ff;color:#193a85;font-weight:700;font-size:.875rem}h1{font-size:clamp(2rem,6vw,3.5rem);line-height:1.05}h2{font-size:1.3rem;margin-bottom:.35rem}h3{font-size:1.12rem;margin-top:0}.category-nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.5rem 0}.category-nav a{padding:.35rem .65rem;border:1px solid #b9c8ec;border-radius:99px;background:#fff;text-decoration:none;font-weight:700}.category-nav span{color:#6f7890}.category-group{background:transparent;border:0;border-radius:0;padding:0;margin:2.5rem 0}.category-group>h2{border-bottom:2px solid #d8dff0;padding-bottom:.35rem}article,section:not(.category-group){background:#fff;border:1px solid #e4decf;border-radius:1rem;padding:1.25rem 1.5rem;margin:1.25rem 0}.answer{white-space:pre-wrap;overflow-wrap:anywhere}.answer a{font-weight:700;text-decoration-thickness:2px}.intro{font-size:1.125rem}</style>`;
 }
 
 function escapeHtml(value) { return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+function renderAnswerMarkdown(value) {
+  const text = String(value || "");
+  const link = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
+  let html = "";
+  let cursor = 0;
+  for (const match of text.matchAll(link)) {
+    html += escapeHtml(text.slice(cursor, match.index));
+    html += `<a href="${escapeHtml(match[2])}" target="_blank" rel="noopener noreferrer">${escapeHtml(match[1])}</a>`;
+    cursor = match.index + match[0].length;
+  }
+  return (html + escapeHtml(text.slice(cursor))).replace(/^\*\*Sources\*\*$/gm, "<strong>Sources</strong>").replace(/\n/g, "<br>");
+}
+const QUESTION_CATEGORIES = ["Game rules & scoring", "Robot build & inspection", "Programming & software", "Events, teams & awards", "Season resources & updates", "General FTC"];
+function categorizeQuestion(question) {
+  const text = String(question || "").toLowerCase();
+  if (/\b(java|c#|code|program|programming|photon|camera)\b/.test(text)) return "Programming & software";
+  if (/\b(motor|servo|battery|robot|cots|mechanism|intake|swerve|mecanum|drivetrain|calibrat|build|part)\b/.test(text)) return "Robot build & inspection";
+  if (/\b(team|event|competition|schedule|rank|portfolio|judge|referee|interview|scout|award)\b/.test(text)) return "Events, teams & awards";
+  if (/\b(score|scoring|points|pollen|nectar|flower|hive|match|auto|teleop|block|strategic|tipped|starting)\b/.test(text)) return "Game rules & scoring";
+  if (/\b(update|q&a|cic|manual|official|season|resource)\b/.test(text)) return "Season resources & updates";
+  return "General FTC";
+}
+function categorySlug(category) { return category.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 function escapeXml(value) { return escapeHtml(value); }
 function displayTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "an earlier visit" : date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "America/New_York" }); }
 
@@ -360,4 +387,4 @@ function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl };
+export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion };
