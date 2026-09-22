@@ -20,7 +20,7 @@ test("keeps links retrieval returned, strips the rest, appends Sources", () => {
   assert.ok(r.text.includes("See also the archive and ."), "label survives as plain text");
   assert.ok(r.text.includes("**Sources**"));
   assert.ok(r.text.includes(`- [G202 Follow the CIC](${manual})`));
-  assert.ok(r.text.includes("- [Game Breakdown — 5:00 to 7:30](https://www.youtube.com/watch?v=abc&t=300s)"));
+  assert.ok(r.text.includes("- [Game Breakdown — 5:00 to 7:30 — Brogan M. Pratt](https://www.youtube.com/watch?v=abc&t=300s)"));
   assert.equal(r.listed, 2, "header-less items are not listed");
 });
 

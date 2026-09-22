@@ -8,6 +8,6 @@
   "ai_search": [{ "binding": "FTC", "instance_name": "ftc-2026" }],
   "ai": { "binding": "AI" },
   "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
-  "analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "ftc_helper_usage" }],
+  "d1_databases": [{ "binding": "QUESTIONS", "database_name": "ftc-helper-questions", "database_id": "282504a6-4c2c-4c31-bd54-a7f681f11c5a" }],
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

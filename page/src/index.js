@@ -28,35 +28,31 @@ const RETRIEVAL_BASE = {
 };
 
 
-// Usage log → Analytics Engine dataset ftc_helper_usage (see wrangler.jsonc USAGE binding).
-// blobs[0]=endpoint, blobs[1]=query (≤2k), blobs[2]=sha256(ip)[:16]
-// blobs[3]=CF-IPCountry (ISO), blobs[4]=cf.colo (PoP)
-// doubles[0]=ok, doubles[1]=chunk_count, doubles[2]=duration_ms
-// indexes[0]=ip hash for approximate unique users
-async function hashIp(ip) {
-  const data = new TextEncoder().encode(String(ip || "unknown"));
-  const dig = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+// Question records are public, source-linked FTC answers. We retain coarse
+// location data for internal reporting, but never render it on public pages.
+function questionEvent(request, endpoint, question, occurredAt = new Date().toISOString()) {
+  const cf = request.cf || {};
+  return {
+    occurredAt,
+    endpoint,
+    question,
+    country: typeof cf.country === "string" && cf.country ? cf.country : null,
+    city: typeof cf.city === "string" && cf.city ? cf.city : null,
+  };
 }
 
-function logUsage(env, { endpoint, query, ip, country, colo, ok, chunkCount, ms }) {
-  if (!env.USAGE || typeof env.USAGE.writeDataPoint !== "function") return;
-  // fire-and-forget; Analytics Engine write is sync API
-  Promise.resolve(hashIp(ip)).then((ipHash) => {
-    try {
-      env.USAGE.writeDataPoint({
-        indexes: [ipHash],
-        blobs: [
-          String(endpoint || ""),
-          String(query || "").slice(0, 2000),
-          ipHash,
-          String(country || ""),
-          String(colo || ""),
-        ],
-        doubles: [ok ? 1 : 0, Number(chunkCount) || 0, Number(ms) || 0],
-      });
-    } catch { /* never fail the request on logging */ }
-  }).catch(() => {});
+async function recordQuestion(env, request, question, endpoint, answer) {
+  if (!env.QUESTIONS) return null;
+  const event = questionEvent(request, endpoint, question);
+  try {
+    const result = await env.QUESTIONS.prepare(
+      "INSERT INTO question_events (occurred_at, endpoint, question, country, city, answer, answer_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(event.occurredAt, event.endpoint, event.question, event.country, event.city, answer, event.occurredAt).run();
+    return result.meta && result.meta.last_row_id ? Number(result.meta.last_row_id) : null;
+  } catch {
+    // An answer should still reach a student if the optional archive is unavailable.
+    return null;
+  }
 }
 
 
@@ -77,6 +73,10 @@ function withChannelInChunkTitles(chunks) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/questions" || url.pathname === "/questions/") return previousQuestionsPage(env, url);
+    if (url.pathname === "/sitemap.xml") return questionSitemap(env, url);
+    const pageMatch = url.pathname.match(/^\/questions\/(\d+)\/?$/);
+    if (pageMatch) return questionPage(env, url, Number(pageMatch[1]));
     if (!url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
@@ -93,34 +93,41 @@ export default {
       const { success } = await env.RL.limit({ key: ip });
       if (!success) return json({ success: false, errors: [{ code: 60005, message: "rate limited" }] }, 429);
     }
+    const refreshMatch = url.pathname.match(/^\/api\/questions\/(\d+)\/refresh$/);
+    if (refreshMatch) {
+      if (!env.QUESTIONS) return json({ success: false, errors: [{ message: "question archive unavailable" }] }, 503);
+      const row = await questionById(env, Number(refreshMatch[1]));
+      if (!row) return json({ success: false, errors: [{ message: "not found" }] }, 404);
+      try {
+        const refreshed = await refreshQuestion(env, row);
+        return json({ success: true, answer: refreshed.answer, answerUpdatedAt: refreshed.answerUpdatedAt });
+      } catch (e) {
+        return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
+      }
+    }
     let body;
     try { body = await request.json(); } catch { return json({ success: false, errors: [{ message: "invalid JSON" }] }, 400); }
     const query = lastUserMessage(body);
     if (!query) return json({ success: false, errors: [{ message: "no user message" }] }, 400);
 
-    const t0 = Date.now();
     try {
       if (url.pathname === "/api/search") {
         const fused = await retrieve(env, query);
         fused.chunks = withChannelInChunkTitles(fused.chunks);
-        logUsage(env, { endpoint: "search", query, ip, country, colo, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
         return json({ success: true, result: { query_kind: "text", search_query: query, ...fused } });
       }
       if (url.pathname === "/api/chat/completions") {
-        const fused = await retrieve(env, query);
-        fused.chunks = withChannelInChunkTitles(fused.chunks);
-        const raw = await generate(env, body.messages, query, fused.chunks);
-        const answer = withVerifiedLinks(raw, fused.chunks);
-        logUsage(env, { endpoint: "chat", query, ip, country, colo, ok: true, chunkCount: (fused.chunks || []).length, ms: Date.now() - t0 });
+        const answer = await answerQuestion(env, body.messages, query);
+        const questionId = await recordQuestion(env, request, query, "chat", answer.text);
         return json({
           id: `id-${Date.now()}`, object: "chat.completion", created: Math.floor(Date.now() / 1000), model: MODEL,
           choices: [{ index: 0, message: { role: "assistant", content: answer.text }, finish_reason: "stop" }],
-          chunks: fused.chunks, hybrid_meta: { ...fused.hybrid_meta, links_removed: answer.removed, sources_listed: answer.listed },
+          chunks: answer.chunks, question_url: questionId ? `${url.origin}/questions/${questionId}` : null,
+          hybrid_meta: { ...answer.hybridMeta, links_removed: answer.removed, sources_listed: answer.listed },
         });
       }
       return json({ success: false, errors: [{ message: "not found" }] }, 404);
     } catch (e) {
-      logUsage(env, { endpoint: url.pathname.replace(/^\/api\//, "") || "api", query, ip, country, colo, ok: false, chunkCount: 0, ms: Date.now() - t0 });
       return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
     }
   },
@@ -134,6 +141,75 @@ function lastUserMessage(body) {
   }
   return "";
 }
+
+async function answerQuestion(env, messages, question) {
+  const fused = await retrieve(env, question);
+  fused.chunks = withChannelInChunkTitles(fused.chunks);
+  const raw = await generate(env, messages, question, fused.chunks);
+  return { ...withVerifiedLinks(raw, fused.chunks), chunks: fused.chunks, hybridMeta: fused.hybrid_meta };
+}
+
+async function questionById(env, id) {
+  const result = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE id = ?"
+  ).bind(id).first();
+  return result || null;
+}
+
+async function refreshQuestion(env, row) {
+  const answer = await answerQuestion(env, [{ role: "user", content: row.question }], row.question);
+  const answerUpdatedAt = new Date().toISOString();
+  await env.QUESTIONS.prepare(
+    "UPDATE question_events SET answer = ?, answer_updated_at = ? WHERE id = ?"
+  ).bind(answer.text, answerUpdatedAt, row.id).run();
+  return { answer: answer.text, answerUpdatedAt };
+}
+
+async function questionPage(env, url, id) {
+  if (!env.QUESTIONS) return html("Question archive unavailable", 503);
+  const row = await questionById(env, id);
+  if (!row) return html("Question not found", 404);
+  let answer = row.answer;
+  let answerUpdatedAt = row.answer_updated_at;
+  if (!answer) {
+    const refreshed = await refreshQuestion(env, row);
+    answer = refreshed.answer;
+    answerUpdatedAt = refreshed.answerUpdatedAt;
+  }
+  const canonical = `${url.origin}/questions/${id}`;
+  const structured = JSON.stringify({
+    "@context": "https://schema.org", "@type": "QAPage", mainEntity: {
+      "@type": "Question", name: row.question,
+      acceptedAnswer: { "@type": "Answer", text: answer },
+    },
+  }).replace(/</g, "\\u003c");
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${escapeHtml(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').textContent=data.answer;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+}
+
+async function previousQuestionsPage(env, url) {
+  if (!env.QUESTIONS) return html("Question archive unavailable", 503);
+  const { results = [] } = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY occurred_at DESC LIMIT 100"
+  ).all();
+  const items = results.map((row) => `<article><h2><a href="/questions/${row.id}">${escapeHtml(row.question)}</a></h2><p class="updated">${escapeHtml(displayTime(row.occurred_at))}</p><div class="answer">${escapeHtml(row.answer || "Open this question to generate its current, source-linked answer.")}</div></article>`).join("");
+  const structured = JSON.stringify({ "@context": "https://schema.org", "@type": "ItemList", itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, url: `${url.origin}/questions/${row.id}`, name: row.question })) }).replace(/</g, "\\u003c");
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+}
+
+async function questionSitemap(env, url) {
+  if (!env.QUESTIONS) return new Response("", { status: 503 });
+  const { results = [] } = await env.QUESTIONS.prepare("SELECT id, answer_updated_at, occurred_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY id DESC LIMIT 1000").all();
+  const entries = results.map((row) => `<url><loc>${escapeXml(`${url.origin}/questions/${row.id}`)}</loc><lastmod>${escapeXml((row.answer_updated_at || row.occurred_at || "").slice(0, 10))}</lastmod></url>`).join("");
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${escapeXml(`${url.origin}/questions/`)}</loc></url>${entries}</urlset>`, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
+}
+
+function questionStyles() {
+  return `<style>:root{font-family:system-ui,sans-serif;color:#1d2740;background:#faf6ee;line-height:1.55}body{margin:0}header{display:flex;justify-content:space-between;gap:1rem;padding:1rem max(1.5rem,calc((100% - 72rem)/2));background:#fff;border-bottom:1px solid #e4decf}header a{color:#1e4bad;font-weight:700}main{max-width:52rem;margin:0 auto;padding:3rem 1.5rem 5rem}.eyebrow,.updated,.refresh{font-size:.875rem;color:#6f7890}.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-weight:700}h1{font-size:clamp(2rem,6vw,3.5rem);line-height:1.05}h2{font-size:1.3rem;margin-bottom:.35rem}article,section{background:#fff;border:1px solid #e4decf;border-radius:1rem;padding:1.25rem 1.5rem;margin:1.25rem 0}article h2{margin-top:0}.answer{white-space:pre-wrap;overflow-wrap:anywhere}.intro{font-size:1.125rem}</style>`;
+}
+
+function escapeHtml(value) { return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+function escapeXml(value) { return escapeHtml(value); }
+function displayTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "an earlier visit" : date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "America/New_York" }); }
 
 // Run both legs to completion, then fuse with Reciprocal Rank Fusion. If one leg errors, use the other.
 async function retrieve(env, query) {
@@ -240,7 +316,8 @@ function retrievedSources(chunks) {
     if (seen.has(n)) continue;
     seen.add(n);
     let label = info.title.replace(/[\[\]]/g, "");
-    if (info.channel) label = `${label} — ${info.channel.replace(/[\[\]]/g, "")}`;
+    const channel = info.channel && info.channel.replace(/[\[\]]/g, "");
+    if (channel && !label.endsWith(` — ${channel}`)) label = `${label} — ${channel}`;
     out.push({ title: label.slice(0, 120), url });
   }
   return out;
@@ -275,6 +352,9 @@ function withVerifiedLinks(answer, chunks) {
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8", ...cors() } });
+}
+function html(body, status = 200, headers = {}) {
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
 }
 function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
