@@ -1,7 +1,7 @@
 // Run: node --test tests/worker_links.test.mjs   (checks the Worker's link verification and Sources list)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, answerSources, structuredQuestion } from "../page/src/index.js";
+import { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, questionKey, answerSources, structuredQuestion } from "../page/src/index.js";
 
 const manual = "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ%20Competition%20Manual%20-%20V1.htm#G202";
 const chunks = [
@@ -59,6 +59,11 @@ test("places questions in stable archive categories", () => {
   assert.equal(categorizeQuestion("How many points is a flower worth?"), "Game rules & scoring");
   assert.equal(categorizeQuestion("Can I modify this servo?"), "Robot build & inspection");
   assert.equal(categorizeQuestion("How do I program a mecanum drive?"), "Programming & software");
+});
+
+test("normalizes repeat questions to one public archive key", () => {
+  assert.equal(questionKey("  How many points is a flower worth?  "), questionKey("how many points is a flower worth?"));
+  assert.notEqual(questionKey("How many points is a flower worth?"), questionKey("How many points is a hive worth?"));
 });
 
 test("publishes machine-readable answers with canonical URLs and cited sources", () => {

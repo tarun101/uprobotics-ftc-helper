@@ -45,6 +45,15 @@ async function recordQuestion(env, request, question, endpoint, answer) {
   if (!env.QUESTIONS) return null;
   const event = questionEvent(request, endpoint, question);
   try {
+    const existing = await env.QUESTIONS.prepare(
+      "SELECT id FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') AND lower(trim(question)) = ? ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC LIMIT 1"
+    ).bind(questionKey(event.question)).first();
+    if (existing) {
+      await env.QUESTIONS.prepare(
+        "UPDATE question_events SET answer = ?, answer_updated_at = ? WHERE id = ?"
+      ).bind(answer, event.occurredAt, existing.id).run();
+      return Number(existing.id);
+    }
     const result = await env.QUESTIONS.prepare(
       "INSERT INTO question_events (occurred_at, endpoint, question, country, city, answer, answer_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
     ).bind(event.occurredAt, event.endpoint, event.question, event.country, event.city, answer, event.occurredAt).run();
@@ -159,6 +168,13 @@ async function questionById(env, id) {
   return result || null;
 }
 
+async function publicQuestionRows(env, limit) {
+  const { results = [] } = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM (SELECT id, occurred_at, question, answer, answer_updated_at, ROW_NUMBER() OVER (PARTITION BY lower(trim(question)) ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC) AS public_rank FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions')) WHERE public_rank = 1 ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC LIMIT ?"
+  ).bind(limit).all();
+  return results;
+}
+
 async function refreshQuestion(env, row) {
   const answer = await answerQuestion(env, [{ role: "user", content: row.question }], row.question);
   const answerUpdatedAt = new Date().toISOString();
@@ -195,9 +211,7 @@ async function questionJson(env, url, id) {
 
 async function questionFeed(env, url) {
   if (!env.QUESTIONS) return jsonLd({ error: "question archive unavailable" }, 503);
-  const { results = [] } = await env.QUESTIONS.prepare(
-    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY occurred_at DESC LIMIT 1000"
-  ).all();
+  const results = await publicQuestionRows(env, 1000);
   return jsonLd({
     "@context": "https://schema.org", "@type": "ItemList", name: "UP Robotics FTC Helper questions and answers",
     url: `${url.origin}/questions/`, numberOfItems: results.length,
@@ -207,9 +221,7 @@ async function questionFeed(env, url) {
 
 async function previousQuestionsPage(env, url) {
   if (!env.QUESTIONS) return html("Question archive unavailable", 503);
-  const { results = [] } = await env.QUESTIONS.prepare(
-    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY occurred_at DESC LIMIT 100"
-  ).all();
+  const results = await publicQuestionRows(env, 100);
   const grouped = new Map(QUESTION_CATEGORIES.map((category) => [category, []]));
   for (const row of results) grouped.get(categorizeQuestion(row.question)).push(row);
   const categoryNav = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<a href="#${categorySlug(category)}">${escapeHtml(category)} <span>${rows.length}</span></a>`).join("");
@@ -220,7 +232,7 @@ async function previousQuestionsPage(env, url) {
 
 async function questionSitemap(env, url) {
   if (!env.QUESTIONS) return new Response("", { status: 503 });
-  const { results = [] } = await env.QUESTIONS.prepare("SELECT id, answer_updated_at, occurred_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY id DESC LIMIT 1000").all();
+  const results = await publicQuestionRows(env, 1000);
   const entries = results.map((row) => `<url><loc>${escapeXml(`${url.origin}/questions/${row.id}`)}</loc><lastmod>${escapeXml((row.answer_updated_at || row.occurred_at || "").slice(0, 10))}</lastmod></url>`).join("");
   return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${escapeXml(`${url.origin}/questions/`)}</loc></url><url><loc>${escapeXml(`${url.origin}/questions.json`)}</loc></url>${entries}</urlset>`, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
 }
@@ -280,6 +292,7 @@ function renderAnswerMarkdown(value) {
   return (html + escapeHtml(text.slice(cursor))).replace(/^\*\*Sources\*\*$/gm, "<strong>Sources</strong>").replace(/\n/g, "<br>");
 }
 const QUESTION_CATEGORIES = ["Game rules & scoring", "Robot build & inspection", "Programming & software", "Events, teams & awards", "Season resources & updates", "General FTC"];
+function questionKey(question) { return String(question || "").trim().toLowerCase(); }
 function categorizeQuestion(question) {
   const text = String(question || "").toLowerCase();
   if (/\b(java|c#|code|program|programming|photon|camera)\b/.test(text)) return "Programming & software";
@@ -442,4 +455,4 @@ function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, answerSources, structuredQuestion };
+export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, questionKey, answerSources, structuredQuestion };
