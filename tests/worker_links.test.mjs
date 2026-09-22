@@ -1,7 +1,7 @@
 // Run: node --test tests/worker_links.test.mjs   (checks the Worker's link verification and Sources list)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion } from "../page/src/index.js";
+import { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, answerSources, structuredQuestion } from "../page/src/index.js";
 
 const manual = "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ%20Competition%20Manual%20-%20V1.htm#G202";
 const chunks = [
@@ -59,4 +59,14 @@ test("places questions in stable archive categories", () => {
   assert.equal(categorizeQuestion("How many points is a flower worth?"), "Game rules & scoring");
   assert.equal(categorizeQuestion("Can I modify this servo?"), "Robot build & inspection");
   assert.equal(categorizeQuestion("How do I program a mecanum drive?"), "Programming & software");
+});
+
+test("publishes machine-readable answers with canonical URLs and cited sources", () => {
+  const answer = `Follow [Rule G202](${manual}).\n\n**Sources**\n- [Rule G202](${manual})`;
+  const sources = answerSources(answer);
+  assert.deepEqual(sources, [{ label: "Rule G202", url: manual }]);
+  const structured = structuredQuestion(new URL("https://ftc.uprobotics.tech/questions.json"), { id: 42, question: "What does G202 require?", occurred_at: "2026-09-21T12:00:00.000Z" }, answer, "2026-09-21T12:01:00.000Z", "Game rules & scoring");
+  assert.equal(structured["@type"], "QAPage");
+  assert.equal(structured.url, "https://ftc.uprobotics.tech/questions/42");
+  assert.equal(structured.mainEntity.acceptedAnswer.isBasedOn[0].url, manual);
 });

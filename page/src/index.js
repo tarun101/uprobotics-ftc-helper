@@ -74,7 +74,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/questions" || url.pathname === "/questions/") return previousQuestionsPage(env, url);
+    if (url.pathname === "/questions.json") return questionFeed(env, url);
     if (url.pathname === "/sitemap.xml") return questionSitemap(env, url);
+    const questionJsonMatch = url.pathname.match(/^\/questions\/(\d+)\.json$/);
+    if (questionJsonMatch) return questionJson(env, url, Number(questionJsonMatch[1]));
     const pageMatch = url.pathname.match(/^\/questions\/(\d+)\/?$/);
     if (pageMatch) return questionPage(env, url, Number(pageMatch[1]));
     if (!url.pathname.startsWith("/api/")) {
@@ -178,13 +181,28 @@ async function questionPage(env, url, id) {
   }
   const canonical = `${url.origin}/questions/${id}`;
   const category = categorizeQuestion(row.question);
-  const structured = JSON.stringify({
-    "@context": "https://schema.org", "@type": "QAPage", mainEntity: {
-      "@type": "Question", name: row.question,
-      acceptedAnswer: { "@type": "Answer", text: answer },
-    },
-  }).replace(/</g, "\\u003c");
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><p class="category">${escapeHtml(category)}</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${renderAnswerMarkdown(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').innerHTML=data.answerHtml;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+  const structured = structuredQuestion(url, row, answer, answerUpdatedAt, category);
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><link rel="alternate" type="application/ld+json" href="${canonical}.json" title="Structured question and answer"><script type="application/ld+json">${jsonLdString(structured)}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><p class="category">${escapeHtml(category)}</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${renderAnswerMarkdown(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').innerHTML=data.answerHtml;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+}
+
+async function questionJson(env, url, id) {
+  if (!env.QUESTIONS) return jsonLd({ error: "question archive unavailable" }, 503);
+  const row = await questionById(env, id);
+  if (!row) return jsonLd({ error: "question not found" }, 404);
+  const answer = row.answer || "";
+  return jsonLd(structuredQuestion(url, row, answer, row.answer_updated_at, categorizeQuestion(row.question)));
+}
+
+async function questionFeed(env, url) {
+  if (!env.QUESTIONS) return jsonLd({ error: "question archive unavailable" }, 503);
+  const { results = [] } = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY occurred_at DESC LIMIT 1000"
+  ).all();
+  return jsonLd({
+    "@context": "https://schema.org", "@type": "ItemList", name: "UP Robotics FTC Helper questions and answers",
+    url: `${url.origin}/questions/`, numberOfItems: results.length,
+    itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, item: structuredQuestion(url, row, row.answer || "", row.answer_updated_at, categorizeQuestion(row.question)).mainEntity })),
+  });
 }
 
 async function previousQuestionsPage(env, url) {
@@ -196,15 +214,52 @@ async function previousQuestionsPage(env, url) {
   for (const row of results) grouped.get(categorizeQuestion(row.question)).push(row);
   const categoryNav = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<a href="#${categorySlug(category)}">${escapeHtml(category)} <span>${rows.length}</span></a>`).join("");
   const items = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<section class="category-group" id="${categorySlug(category)}"><h2>${escapeHtml(category)}</h2>${rows.map((row) => `<article><h3><a href="/questions/${row.id}">${escapeHtml(row.question)}</a></h3><p class="updated">${escapeHtml(displayTime(row.occurred_at))}</p><div class="answer">${renderAnswerMarkdown(row.answer || "Open this question to generate its current, source-linked answer.")}</div></article>`).join("")}</section>`).join("");
-  const structured = JSON.stringify({ "@context": "https://schema.org", "@type": "ItemList", itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, url: `${url.origin}/questions/${row.id}`, name: row.question })) }).replace(/</g, "\\u003c");
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><script type="application/ld+json">${structured}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p><nav class="category-nav" aria-label="Question categories">${categoryNav}</nav>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+  const structured = { "@context": "https://schema.org", "@type": "CollectionPage", name: "Previous FTC questions and answers", mainEntity: { "@type": "ItemList", numberOfItems: results.length, itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, url: `${url.origin}/questions/${row.id}`, name: row.question })) } };
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><link rel="alternate" type="application/ld+json" href="${url.origin}/questions.json" title="Structured question and answer feed"><script type="application/ld+json">${jsonLdString(structured)}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p><nav class="category-nav" aria-label="Question categories">${categoryNav}</nav>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
 }
 
 async function questionSitemap(env, url) {
   if (!env.QUESTIONS) return new Response("", { status: 503 });
   const { results = [] } = await env.QUESTIONS.prepare("SELECT id, answer_updated_at, occurred_at FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') ORDER BY id DESC LIMIT 1000").all();
   const entries = results.map((row) => `<url><loc>${escapeXml(`${url.origin}/questions/${row.id}`)}</loc><lastmod>${escapeXml((row.answer_updated_at || row.occurred_at || "").slice(0, 10))}</lastmod></url>`).join("");
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${escapeXml(`${url.origin}/questions/`)}</loc></url>${entries}</urlset>`, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${escapeXml(`${url.origin}/questions/`)}</loc></url><url><loc>${escapeXml(`${url.origin}/questions.json`)}</loc></url>${entries}</urlset>`, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
+}
+
+function structuredQuestion(url, row, answer, answerUpdatedAt, category) {
+  const canonical = `${url.origin}/questions/${row.id}`;
+  const sources = answerSources(answer);
+  return {
+    "@context": "https://schema.org", "@type": "QAPage", "@id": canonical, url: canonical,
+    inLanguage: "en-US", dateModified: answerUpdatedAt || row.occurred_at,
+    mainEntity: {
+      "@type": "Question", "@id": `${canonical}#question`, url: canonical, name: row.question,
+      dateCreated: row.occurred_at, about: { "@type": "Thing", name: category },
+      acceptedAnswer: {
+        "@type": "Answer", "@id": `${canonical}#answer`, text: markdownToPlainText(answer),
+        dateModified: answerUpdatedAt || row.occurred_at,
+        isBasedOn: sources.map((source) => ({ "@type": "CreativeWork", name: source.label, url: source.url })),
+      },
+    },
+  };
+}
+
+function answerSources(answer) {
+  const sources = [];
+  const seen = new Set();
+  for (const match of String(answer || "").matchAll(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g)) {
+    const url = match[2];
+    if (!seen.has(url)) { sources.push({ label: match[1], url }); seen.add(url); }
+  }
+  return sources;
+}
+
+function markdownToPlainText(answer) {
+  return String(answer || "").replace(/\[([^\]]+)]\(https?:\/\/[^)\s]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1");
+}
+
+function jsonLdString(value) { return JSON.stringify(value).replace(/</g, "\\u003c"); }
+function jsonLd(value, status = 200) {
+  return new Response(jsonLdString(value), { status, headers: { "content-type": "application/ld+json; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
 }
 
 function questionStyles() {
@@ -387,4 +442,4 @@ function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion };
+export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, answerSources, structuredQuestion };
