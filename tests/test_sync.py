@@ -12,6 +12,7 @@ class FakeCF:
         self.items = {}
         self.calls = []
         self.n = 0
+        self.failed = []
 
     def upload(self, key, body, metadata):
         self.n += 1
@@ -31,7 +32,7 @@ class FakeCF:
         return True
 
     def errors(self):
-        return []
+        return self.failed
 
     def item(self, item_id):
         return self.items[item_id]
@@ -50,6 +51,10 @@ class SyncTest(unittest.TestCase):
 
     def ix(self, run_id):
         return fi.Indexer(self.cfg, self.state, self.cf, run_id)
+
+    def tearDown(self):
+        self.state.db.close()
+        self.tmp.cleanup()
 
     def test_unchanged_changed_stale(self):
         a, b = item("manual:G1", "one"), item("manual:G2", "two")
@@ -76,6 +81,35 @@ class SyncTest(unittest.TestCase):
         ix = self.ix("r2"); ix.sync_items([item("manual:G1", "x")], {"manual"})
         self.assertEqual(ix.stats["deleted"], 0)
         self.assertIsNotNone(self.state.item("video:abc-0000"))
+
+    def test_failed_video_window_is_retried_before_new_backfill(self):
+        vid = "_fQaWPjafBY"
+        self.state.db.execute("INSERT INTO videos(video_id,status,upload_date,windows) VALUES(?,?,?,?)",
+                              (vid, "captioned", "20210401", 2))
+        self.state.db.execute("INSERT INTO videos(video_id,status) VALUES('new-video','pending')")
+        a = item(f"video:{vid}-0000", "first window", "video")
+        b = item(f"video:{vid}-0150", "second window", "video")
+        ix = self.ix("r1"); ix.sync_items([a, b])
+        failed_id = self.state.item(b.item_id)["cf_item_id"]
+        self.cf.failed = [{"id": failed_id, "error": "unknown_error"}]
+        ix.finalize()
+        self.assertTrue(ix.errors)
+        self.assertIsNone(self.state.item(b.item_id))
+        self.assertEqual(self.state.pending_videos(1)[0]["video_id"], vid)
+        # Next round uploads only the missing window and retains the good one.
+        self.cf.failed = []
+        retry = self.ix("r2"); retry.sync_items([a, b]); retry.finalize()
+        self.assertEqual((retry.stats["uploaded"], retry.stats["unchanged"]), (1, 1))
+        self.assertFalse(retry.errors)
+        self.assertEqual(len(self.cf.items), 2)
+
+    def test_failed_manual_does_not_requeue_video(self):
+        self.state.db.execute("INSERT INTO videos(video_id,status) VALUES('manual-id','captioned')")
+        a = item("manual:manual-id", "rule")
+        ix = self.ix("r1"); ix.sync_items([a])
+        self.cf.failed = [{"id": self.state.item(a.item_id)["cf_item_id"], "error": "unknown_error"}]
+        ix.finalize()
+        self.assertEqual(self.state.pending_videos(10), [])
 
     def test_windows_and_season(self):
         cues = [yt.Cue(t, f"w{t}") for t in range(0, 600, 5)]

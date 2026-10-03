@@ -10,6 +10,11 @@ paths:
   state_dir: ~/Library/Application Support/ftc-index
   log_dir: ~/Library/Logs/ftc-index
   yt_dlp: /opt/homebrew/bin/yt-dlp
+  # YouTube blocks anonymous caption fetches from the mini's IP (since 2026-09-24). When this cookie file exists (exported from
+  # the dedicated "FTC Indexer" Chrome profile, Tarun's paid account), captions come only from the hourly `captions` job:
+  # one video an hour at a random minute (Tarun, 2026-09-28). The nightly run then only discovers videos.
+  yt_cookies: ~/Library/Application Support/ftc-index/youtube-cookies.txt
+  pot_server_home: /Users/Shared/ftc-tools-502/bgutil/src/server   # bgutil PO-token script (yt-dlp plugin in ~/.yt-dlp/plugins)
 
 season:
   label: "2026-27"
@@ -19,9 +24,10 @@ youtube:
   defaults:
     include_shorts: false
     include_streams: true
-    backfill_per_day: 150   # max videos fetched per run
+    backfill_per_day: 25    # max videos fetched per run; reduced after repeated YouTube 429s
     max_duration_seconds: 7200   # skip videos and streams longer than 2 hours (Tarun, 2026-09-12)
-    delay_seconds: [10, 25] # random pause between videos (5–15 s drew an HTTP 429 after ~120 fetches on 2026-09-12)
+    delay_seconds: [30, 60] # random pause between videos; keep requests conservative after rate limiting
+    captions_jitter_seconds: 3300   # hourly captions job sleeps a random 0..N s before its one video
     reconcile_weekday: 6    # Sunday: weekly flat-playlist rediscovery + item reconcile
   channels:
     - { name: FIRST Tech Challenge, id: UCkWMXdRQr5yoZRz7gFYyRcw }

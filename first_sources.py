@@ -28,9 +28,12 @@ log = logging.getLogger("ftc-index.first")
 HOST = "ftc-resources.firstinspires.org"
 GAME_PATH = "/ftc/game"
 HUB_URL = f"https://{HOST}{GAME_PATH}"
-QA_HOST = "ftc-qa.firstinspires.org"                       # readable without login; asking needs a Lead Coach login we never use
-QA_RSS_URL = f"https://{QA_HOST}/rss/answers.rss"
-QA_ONEPAGE_URL = f"https://{QA_HOST}/onepage.html"
+# FIRST moved Q&A to game-qa.firstinspires.org for 2026-27 (ftc-qa.firstinspires.org now redirects here). The board is
+# public (config isPublic) and publishes an Atom feed; asking needs a Lead Coach login we never use. Path resets each season.
+QA_HOST = "game-qa.firstinspires.org"
+QA_BOARD_URL = f"https://{QA_HOST}/boards/2027/FTC/QA"
+QA_RSS_URL = f"{QA_BOARD_URL}/answers.atom"
+QA_ONEPAGE_URL = QA_BOARD_URL
 USER_AGENT = "UPRoboticsFTCHelper/1.0 (+https://ftc.uprobotics.tech; community tool, not affiliated with FIRST)"
 
 RULE_ID_RE = re.compile(r"^[A-Z]{1,2}\d{3}$")
@@ -114,7 +117,7 @@ def allowed(url: str) -> bool:
     p = urlparse(url)
     if p.scheme != "https":
         return False
-    if p.netloc == QA_HOST:
+    if p.hostname == QA_HOST and p.port in (None, 443):     # the feed writes links as host:443
         return True
     return p.netloc == HOST and (p.path == GAME_PATH or p.path.startswith(GAME_PATH + "/"))
 
@@ -502,7 +505,7 @@ def team_update_items(session: requests.Session, hub: HubInfo) -> list[Item]:
 
 
 def qa_id(link: str, fallback: str) -> str:
-    """'https://ftc-qa.firstinspires.org/qa/123' -> '123'; otherwise a slug of the guid/title."""
+    """'https://game-qa.firstinspires.org/boards/2027/FTC/QA/qa/123' -> '123'; otherwise a slug of the guid/title."""
     path = urlparse(link or "").path.rstrip("/")
     m = re.search(r"/qa/([^/]+)$", path)
     raw = m.group(1) if m else (fallback or "")
@@ -547,7 +550,7 @@ def qa_items(session: requests.Session) -> list[Item]:
         when = e.get("published_parsed") or e.get("updated_parsed")
         published = calendar.timegm(when) if when else int(datetime.now(timezone.utc).timestamp())
         date_txt = datetime.fromtimestamp(published, timezone.utc).strftime("%b %d, %Y") if when else "date not listed"
-        url = link if allowed(link) else QA_ONEPAGE_URL
+        url = link.replace(f"{QA_HOST}:443", QA_HOST) if allowed(link) else QA_ONEPAGE_URL
         head = [f"# Q&A {qid}: {title}", f"Source: FIRST Tech Challenge official Q&A, answered {date_txt}", f"Link: {url}", "Type: Q&A",
                 "Note: official Q&A answers clarify the Competition Manual; the newest answer wins over older manual text."]
         if len(text) < 20:

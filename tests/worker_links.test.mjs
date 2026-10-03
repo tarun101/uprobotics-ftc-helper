@@ -1,7 +1,7 @@
 // Run: node --test tests/worker_links.test.mjs   (checks the Worker's link verification and Sources list)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withVerifiedLinks, retrievedSources, normUrl } from "../page/src/index.js";
+import { withVerifiedLinks, retrievedSources, normUrl, questionEvent } from "../page/src/index.js";
 
 const manual = "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ%20Competition%20Manual%20-%20V1.htm#G202";
 const chunks = [
@@ -45,4 +45,20 @@ test("Sources list caps at five and dedupes by link", () => {
   assert.equal(retrievedSources(many).length, 8);
   const r = withVerifiedLinks("[R0](https://x.org/r#0)", many);
   assert.equal(r.listed, 5);
+});
+
+test("question audit records only the submitted question and coarse Cloudflare location", () => {
+  const event = questionEvent(
+    { cf: { country: "US", city: "Bethesda", colo: "IAD", asn: 13335 } },
+    "/api/chat/completions",
+    "How tall can the robot be?",
+    "2026-09-18T02:30:00.000Z",
+  );
+  assert.deepEqual(event, {
+    occurredAt: "2026-09-18T02:30:00.000Z",
+    endpoint: "/api/chat/completions",
+    question: "How tall can the robot be?",
+    country: "US",
+    city: "Bethesda",
+  });
 });

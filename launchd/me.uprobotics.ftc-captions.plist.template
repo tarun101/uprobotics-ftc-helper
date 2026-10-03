@@ -2,23 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- FTC index refresh at 23:00 and 05:00 local time (America/New_York on the Mac mini; Tarun ruling 2026-09-13: two runs so a Team
-       Update posted in the evening is indexed before school; the run lock skips an overlap). Set the Healthchecks.io check to
-       a 1-day period with a 12-hour grace so either run keeps it green.
-       Install: bash launchd/install.sh (per-user symlink to boot-volume plist; no administrator access). -->
-  <key>Label</key><string>me.uprobotics.ftc-index</string>
+  <!-- Hourly: one signed-in YouTube caption fetch at a random minute (captions_jitter_seconds). Tarun, 2026-09-28.
+       Install: bash launchd/install.sh me.uprobotics.ftc-captions -->
+  <key>Label</key><string>me.uprobotics.ftc-captions</string>
   <key>ProgramArguments</key>
   <array>
     <string>__REPO__/.venv/bin/python</string>
     <string>__REPO__/ftc_index.py</string>
-    <string>run</string>
+    <string>captions</string>
   </array>
   <key>WorkingDirectory</key><string>__REPO__</string>
-  <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
-  </array>
+  <key>StartInterval</key><integer>3600</integer>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/ftc-index/launchd.out.log</string>

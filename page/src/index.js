@@ -55,6 +55,7 @@ export default {
         return json({ success: true, result: { query_kind: "text", search_query: query, ...fused } });
       }
       if (url.pathname === "/api/chat/completions") {
+        await recordQuestion(env, request, query, url.pathname);
         const fused = await retrieve(env, query);
         const raw = await generate(env, body.messages, query, fused.chunks);
         const answer = withVerifiedLinks(raw, fused.chunks);
@@ -78,6 +79,27 @@ function lastUserMessage(body) {
     if (msgs[i] && msgs[i].role === "user" && typeof msgs[i].content === "string" && msgs[i].content.trim()) return msgs[i].content.trim();
   }
   return "";
+}
+
+// Keep a private, query-level record for product quality reporting. Cloudflare
+// supplies the coarse location fields; we intentionally do not retain an IP
+// address, browser identifier, or conversation history.
+function questionEvent(request, endpoint, question, occurredAt = new Date().toISOString()) {
+  const cf = request.cf || {};
+  return {
+    occurredAt,
+    endpoint,
+    question,
+    country: typeof cf.country === "string" && cf.country ? cf.country : null,
+    city: typeof cf.city === "string" && cf.city ? cf.city : null,
+  };
+}
+
+async function recordQuestion(env, request, question, endpoint) {
+  const event = questionEvent(request, endpoint, question);
+  await env.QUESTIONS.prepare(
+    "INSERT INTO question_events (occurred_at, endpoint, question, country, city) VALUES (?, ?, ?, ?, ?)"
+  ).bind(event.occurredAt, event.endpoint, event.question, event.country, event.city).run();
 }
 
 // Run both legs to completion, then fuse with Reciprocal Rank Fusion. If one leg errors, use the other.
@@ -224,4 +246,4 @@ function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl };
+export { withVerifiedLinks, retrievedSources, normUrl, questionEvent };
