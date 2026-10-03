@@ -19,7 +19,7 @@ Mac mini (home internet) — launchd at 23:00 and 05:00 ET
     ├─ FIRST: HTML manual → one Item per rule / section; Team Update PDFs → one Item each; hub → one Item
     ├─ Q&A: FIRST's public answers RSS feed → one Item per answered question (never logs in)
     ├─ YouTube: RSS + yt-dlp captions → one Item (a Window) per 2–3 minute stretch, with a &t= link
-    ├─ docs sites (weekly): gm0, FTC Docs, REV → one Item per page
+    ├─ docs sites (weekly): gm0, FTC Docs, REV, FIRST field/team/event hubs, season overview, community blog/forum, SDK, FTCSIM → one Item per page
     ├─ state.sqlite: what is uploaded, content hashes, video queue
     ├─ Cloudflare AI Search Items API: upload new/changed Items, delete old ones
     ├─ weekly: reconcile the instance with local state, then the 30-question retrieval check
@@ -147,8 +147,8 @@ then deletes the old key. A weekly reconcile compares the instance's item list w
 
 ## YouTube politeness
 
-One video at a time, one caption file per video, 30–60 s random delay, at most 25 videos per run, stop for the day on
-HTTP 429 or a bot check. Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
+One video at a time, one caption file per video, 60 s delay, at most 150 videos per run. Two consecutive HTTP 429 /
+bot checks set `youtube:blocked_until` (~3 hours); later runs skip YouTube until then (launchd also every 3 hours). Videos without English captions are logged and skipped. Shorts are excluded; streams are included once
 they have ended.
 
 ## License

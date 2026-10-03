@@ -27,9 +27,68 @@ const RETRIEVAL_BASE = {
   boost_by: [{ field: "published", direction: "desc" }],
 };
 
+
+// Question records are public, source-linked FTC answers. We retain coarse
+// location data for internal reporting, but never render it on public pages.
+function questionEvent(request, endpoint, question, occurredAt = new Date().toISOString()) {
+  const cf = request.cf || {};
+  return {
+    occurredAt,
+    endpoint,
+    question,
+    country: typeof cf.country === "string" && cf.country ? cf.country : null,
+    city: typeof cf.city === "string" && cf.city ? cf.city : null,
+  };
+}
+
+async function recordQuestion(env, request, question, endpoint, answer) {
+  if (!env.QUESTIONS) return null;
+  const event = questionEvent(request, endpoint, question);
+  try {
+    const existing = await env.QUESTIONS.prepare(
+      "SELECT id FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions') AND lower(trim(question)) = ? ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC LIMIT 1"
+    ).bind(questionKey(event.question)).first();
+    if (existing) {
+      await env.QUESTIONS.prepare(
+        "UPDATE question_events SET answer = ?, answer_updated_at = ? WHERE id = ?"
+      ).bind(answer, event.occurredAt, existing.id).run();
+      return Number(existing.id);
+    }
+    const result = await env.QUESTIONS.prepare(
+      "INSERT INTO question_events (occurred_at, endpoint, question, country, city, answer, answer_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(event.occurredAt, event.endpoint, event.question, event.country, event.city, answer, event.occurredAt).run();
+    return result.meta && result.meta.last_row_id ? Number(result.meta.last_row_id) : null;
+  } catch {
+    // An answer should still reach a student if the optional archive is unavailable.
+    return null;
+  }
+}
+
+
+// Cloudflare chat-page-snippet cites chunk titles from the "# …" header, not our Sources footer.
+// Video windows already carry "Channel: …"; fold that into the title line for display.
+function withChannelInChunkTitles(chunks) {
+  return (chunks || []).map((c) => {
+    const text = c.text || "";
+    const ch = (text.match(/^Channel: (.+)$/m) || [])[1];
+    const t = (text.match(/^# (.+)$/m) || [])[1];
+    if (!ch || !t) return c;
+    if (t.includes(ch)) return c;
+    const newText = text.replace(/^# .+$/m, `# ${t} — ${ch}`);
+    return { ...c, text: newText };
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/questions" || url.pathname === "/questions/") return previousQuestionsPage(env, url);
+    if (url.pathname === "/questions.json") return questionFeed(env, url);
+    if (url.pathname === "/sitemap.xml") return questionSitemap(env, url);
+    const questionJsonMatch = url.pathname.match(/^\/questions\/(\d+)\.json$/);
+    if (questionJsonMatch) return questionJson(env, url, Number(questionJsonMatch[1]));
+    const pageMatch = url.pathname.match(/^\/questions\/(\d+)\/?$/);
+    if (pageMatch) return questionPage(env, url, Number(pageMatch[1]));
     if (!url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
@@ -40,9 +99,23 @@ export default {
       return json({ success: false, errors: [{ message: "POST only" }] }, 405);
     }
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const country = (request.cf && request.cf.country) || request.headers.get("cf-ipcountry") || "";
+    const colo = (request.cf && request.cf.colo) || "";
     if (env.RL) {
       const { success } = await env.RL.limit({ key: ip });
       if (!success) return json({ success: false, errors: [{ code: 60005, message: "rate limited" }] }, 429);
+    }
+    const refreshMatch = url.pathname.match(/^\/api\/questions\/(\d+)\/refresh$/);
+    if (refreshMatch) {
+      if (!env.QUESTIONS) return json({ success: false, errors: [{ message: "question archive unavailable" }] }, 503);
+      const row = await questionById(env, Number(refreshMatch[1]));
+      if (!row) return json({ success: false, errors: [{ message: "not found" }] }, 404);
+      try {
+        const refreshed = await refreshQuestion(env, row);
+        return json({ success: true, answer: refreshed.answer, answerHtml: renderAnswerMarkdown(refreshed.answer), answerUpdatedAt: refreshed.answerUpdatedAt });
+      } catch (e) {
+        return json({ success: false, errors: [{ message: String(e && e.message || e) }] }, 500);
+      }
     }
     let body;
     try { body = await request.json(); } catch { return json({ success: false, errors: [{ message: "invalid JSON" }] }, 400); }
@@ -52,17 +125,17 @@ export default {
     try {
       if (url.pathname === "/api/search") {
         const fused = await retrieve(env, query);
+        fused.chunks = withChannelInChunkTitles(fused.chunks);
         return json({ success: true, result: { query_kind: "text", search_query: query, ...fused } });
       }
       if (url.pathname === "/api/chat/completions") {
-        await recordQuestion(env, request, query, url.pathname);
-        const fused = await retrieve(env, query);
-        const raw = await generate(env, body.messages, query, fused.chunks);
-        const answer = withVerifiedLinks(raw, fused.chunks);
+        const answer = await answerQuestion(env, body.messages, query);
+        const questionId = await recordQuestion(env, request, query, "chat", answer.text);
         return json({
           id: `id-${Date.now()}`, object: "chat.completion", created: Math.floor(Date.now() / 1000), model: MODEL,
           choices: [{ index: 0, message: { role: "assistant", content: answer.text }, finish_reason: "stop" }],
-          chunks: fused.chunks, hybrid_meta: { ...fused.hybrid_meta, links_removed: answer.removed, sources_listed: answer.listed },
+          chunks: answer.chunks, question_url: questionId ? `${url.origin}/questions/${questionId}` : null,
+          hybrid_meta: { ...answer.hybridMeta, links_removed: answer.removed, sources_listed: answer.listed },
         });
       }
       return json({ success: false, errors: [{ message: "not found" }] }, 404);
@@ -81,26 +154,157 @@ function lastUserMessage(body) {
   return "";
 }
 
-// Keep a private, query-level record for product quality reporting. Cloudflare
-// supplies the coarse location fields; we intentionally do not retain an IP
-// address, browser identifier, or conversation history.
-function questionEvent(request, endpoint, question, occurredAt = new Date().toISOString()) {
-  const cf = request.cf || {};
+async function answerQuestion(env, messages, question) {
+  const fused = await retrieve(env, question);
+  fused.chunks = withChannelInChunkTitles(fused.chunks);
+  const raw = await generate(env, messages, question, fused.chunks);
+  return { ...withVerifiedLinks(raw, fused.chunks), chunks: fused.chunks, hybridMeta: fused.hybrid_meta };
+}
+
+async function questionById(env, id) {
+  const result = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM question_events WHERE id = ?"
+  ).bind(id).first();
+  return result || null;
+}
+
+async function publicQuestionRows(env, limit) {
+  const { results = [] } = await env.QUESTIONS.prepare(
+    "SELECT id, occurred_at, question, answer, answer_updated_at FROM (SELECT id, occurred_at, question, answer, answer_updated_at, ROW_NUMBER() OVER (PARTITION BY lower(trim(question)) ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC) AS public_rank FROM question_events WHERE endpoint IN ('chat', '/api/chat/completions')) WHERE public_rank = 1 ORDER BY COALESCE(answer_updated_at, occurred_at) DESC, id DESC LIMIT ?"
+  ).bind(limit).all();
+  return results;
+}
+
+async function refreshQuestion(env, row) {
+  const answer = await answerQuestion(env, [{ role: "user", content: row.question }], row.question);
+  const answerUpdatedAt = new Date().toISOString();
+  await env.QUESTIONS.prepare(
+    "UPDATE question_events SET answer = ?, answer_updated_at = ? WHERE id = ?"
+  ).bind(answer.text, answerUpdatedAt, row.id).run();
+  return { answer: answer.text, answerUpdatedAt };
+}
+
+async function questionPage(env, url, id) {
+  if (!env.QUESTIONS) return html("Question archive unavailable", 503);
+  const row = await questionById(env, id);
+  if (!row) return html("Question not found", 404);
+  let answer = row.answer;
+  let answerUpdatedAt = row.answer_updated_at;
+  if (!answer) {
+    const refreshed = await refreshQuestion(env, row);
+    answer = refreshed.answer;
+    answerUpdatedAt = refreshed.answerUpdatedAt;
+  }
+  const canonical = `${url.origin}/questions/${id}`;
+  const category = categorizeQuestion(row.question);
+  const structured = structuredQuestion(url, row, answer, answerUpdatedAt, category);
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(row.question)} · UP Robotics FTC Helper</title><meta name="description" content="${escapeHtml(answer).slice(0, 155)}"><link rel="canonical" href="${canonical}"><link rel="alternate" type="application/ld+json" href="${canonical}.json" title="Structured question and answer"><script type="application/ld+json">${jsonLdString(structured)}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="/questions/">Previous questions</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><p class="category">${escapeHtml(category)}</p><h1>${escapeHtml(row.question)}</h1><p class="updated">Answer last refreshed <time id="updated" datetime="${escapeHtml(answerUpdatedAt || "")}">${escapeHtml(displayTime(answerUpdatedAt))}</time>.</p><section aria-labelledby="answer-heading"><h2 id="answer-heading">Answer</h2><div id="answer" class="answer">${renderAnswerMarkdown(answer)}</div><p id="refresh" class="refresh" aria-live="polite">Refreshing this answer from the current index…</p></section></main><script>fetch('/api/questions/${id}/refresh',{method:'POST'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{document.querySelector('#answer').innerHTML=data.answerHtml;document.querySelector('#updated').textContent='just now';document.querySelector('#refresh').textContent='Answer refreshed from the current index.'}).catch(()=>{document.querySelector('#refresh').textContent='Showing the most recently saved answer.'});</script></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+}
+
+async function questionJson(env, url, id) {
+  if (!env.QUESTIONS) return jsonLd({ error: "question archive unavailable" }, 503);
+  const row = await questionById(env, id);
+  if (!row) return jsonLd({ error: "question not found" }, 404);
+  const answer = row.answer || "";
+  return jsonLd(structuredQuestion(url, row, answer, row.answer_updated_at, categorizeQuestion(row.question)));
+}
+
+async function questionFeed(env, url) {
+  if (!env.QUESTIONS) return jsonLd({ error: "question archive unavailable" }, 503);
+  const results = await publicQuestionRows(env, 1000);
+  return jsonLd({
+    "@context": "https://schema.org", "@type": "ItemList", name: "UP Robotics FTC Helper questions and answers",
+    url: `${url.origin}/questions/`, numberOfItems: results.length,
+    itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, item: structuredQuestion(url, row, row.answer || "", row.answer_updated_at, categorizeQuestion(row.question)).mainEntity })),
+  });
+}
+
+async function previousQuestionsPage(env, url) {
+  if (!env.QUESTIONS) return html("Question archive unavailable", 503);
+  const results = await publicQuestionRows(env, 100);
+  const grouped = new Map(QUESTION_CATEGORIES.map((category) => [category, []]));
+  for (const row of results) grouped.get(categorizeQuestion(row.question)).push(row);
+  const categoryNav = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<a href="#${categorySlug(category)}">${escapeHtml(category)} <span>${rows.length}</span></a>`).join("");
+  const items = [...grouped.entries()].filter(([, rows]) => rows.length).map(([category, rows]) => `<section class="category-group" id="${categorySlug(category)}"><h2>${escapeHtml(category)}</h2>${rows.map((row) => `<article><h3><a href="/questions/${row.id}">${escapeHtml(row.question)}</a></h3><p class="updated">${escapeHtml(displayTime(row.occurred_at))}</p><div class="answer">${renderAnswerMarkdown(row.answer || "Open this question to generate its current, source-linked answer.")}</div></article>`).join("")}</section>`).join("");
+  const structured = { "@context": "https://schema.org", "@type": "CollectionPage", name: "Previous FTC questions and answers", mainEntity: { "@type": "ItemList", numberOfItems: results.length, itemListElement: results.map((row, index) => ({ "@type": "ListItem", position: index + 1, url: `${url.origin}/questions/${row.id}`, name: row.question })) } };
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Previous FTC questions and answers · UP Robotics</title><meta name="description" content="Source-linked answers to recent FIRST Tech Challenge BIOBUZZ questions."><link rel="canonical" href="${url.origin}/questions/"><link rel="alternate" type="application/ld+json" href="${url.origin}/questions.json" title="Structured question and answer feed"><script type="application/ld+json">${jsonLdString(structured)}</script>${questionStyles()}</head><body><header><a href="/">UP Robotics FTC Helper</a><a href="https://ftc-resources.firstinspires.org/ftc/game">Official game hub</a></header><main><p class="eyebrow">FTC 2026–27 BIOBUZZ</p><h1>Previous questions and answers</h1><p class="intro">Every answer links back to the source. Individual pages refresh their answer from the current index when opened.</p><nav class="category-nav" aria-label="Question categories">${categoryNav}</nav>${items || "<p>No public questions yet.</p>"}</main></body></html>`, 200, { "cache-control": "public, max-age=0, must-revalidate" });
+}
+
+async function questionSitemap(env, url) {
+  if (!env.QUESTIONS) return new Response("", { status: 503 });
+  const results = await publicQuestionRows(env, 1000);
+  const entries = results.map((row) => `<url><loc>${escapeXml(`${url.origin}/questions/${row.id}`)}</loc><lastmod>${escapeXml((row.answer_updated_at || row.occurred_at || "").slice(0, 10))}</lastmod></url>`).join("");
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${escapeXml(`${url.origin}/questions/`)}</loc></url><url><loc>${escapeXml(`${url.origin}/questions.json`)}</loc></url>${entries}</urlset>`, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
+}
+
+function structuredQuestion(url, row, answer, answerUpdatedAt, category) {
+  const canonical = `${url.origin}/questions/${row.id}`;
+  const sources = answerSources(answer);
   return {
-    occurredAt,
-    endpoint,
-    question,
-    country: typeof cf.country === "string" && cf.country ? cf.country : null,
-    city: typeof cf.city === "string" && cf.city ? cf.city : null,
+    "@context": "https://schema.org", "@type": "QAPage", "@id": canonical, url: canonical,
+    inLanguage: "en-US", dateModified: answerUpdatedAt || row.occurred_at,
+    mainEntity: {
+      "@type": "Question", "@id": `${canonical}#question`, url: canonical, name: row.question,
+      dateCreated: row.occurred_at, about: { "@type": "Thing", name: category },
+      acceptedAnswer: {
+        "@type": "Answer", "@id": `${canonical}#answer`, text: markdownToPlainText(answer),
+        dateModified: answerUpdatedAt || row.occurred_at,
+        isBasedOn: sources.map((source) => ({ "@type": "CreativeWork", name: source.label, url: source.url })),
+      },
+    },
   };
 }
 
-async function recordQuestion(env, request, question, endpoint) {
-  const event = questionEvent(request, endpoint, question);
-  await env.QUESTIONS.prepare(
-    "INSERT INTO question_events (occurred_at, endpoint, question, country, city) VALUES (?, ?, ?, ?, ?)"
-  ).bind(event.occurredAt, event.endpoint, event.question, event.country, event.city).run();
+function answerSources(answer) {
+  const sources = [];
+  const seen = new Set();
+  for (const match of String(answer || "").matchAll(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g)) {
+    const url = match[2];
+    if (!seen.has(url)) { sources.push({ label: match[1], url }); seen.add(url); }
+  }
+  return sources;
 }
+
+function markdownToPlainText(answer) {
+  return String(answer || "").replace(/\[([^\]]+)]\(https?:\/\/[^)\s]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1");
+}
+
+function jsonLdString(value) { return JSON.stringify(value).replace(/</g, "\\u003c"); }
+function jsonLd(value, status = 200) {
+  return new Response(jsonLdString(value), { status, headers: { "content-type": "application/ld+json; charset=utf-8", "cache-control": "public, max-age=0, must-revalidate" } });
+}
+
+function questionStyles() {
+  return `<style>:root{font-family:system-ui,sans-serif;color:#1d2740;background:#faf6ee;line-height:1.55}body{margin:0}header{display:flex;justify-content:space-between;gap:1rem;padding:1rem max(1.5rem,calc((100% - 72rem)/2));background:#fff;border-bottom:1px solid #e4decf}a{color:#1e4bad}header a{font-weight:700}main{max-width:52rem;margin:0 auto;padding:3rem 1.5rem 5rem}.eyebrow,.updated,.refresh{font-size:.875rem;color:#6f7890}.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-weight:700}.category{display:inline-block;margin:0;padding:.25rem .65rem;border-radius:99px;background:#dce7ff;color:#193a85;font-weight:700;font-size:.875rem}h1{font-size:clamp(2rem,6vw,3.5rem);line-height:1.05}h2{font-size:1.3rem;margin-bottom:.35rem}h3{font-size:1.12rem;margin-top:0}.category-nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.5rem 0}.category-nav a{padding:.35rem .65rem;border:1px solid #b9c8ec;border-radius:99px;background:#fff;text-decoration:none;font-weight:700}.category-nav span{color:#6f7890}.category-group{background:transparent;border:0;border-radius:0;padding:0;margin:2.5rem 0}.category-group>h2{border-bottom:2px solid #d8dff0;padding-bottom:.35rem}article,section:not(.category-group){background:#fff;border:1px solid #e4decf;border-radius:1rem;padding:1.25rem 1.5rem;margin:1.25rem 0}.answer{white-space:pre-wrap;overflow-wrap:anywhere}.answer a{font-weight:700;text-decoration-thickness:2px}.intro{font-size:1.125rem}</style>`;
+}
+
+function escapeHtml(value) { return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+function renderAnswerMarkdown(value) {
+  const text = String(value || "");
+  const link = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
+  let html = "";
+  let cursor = 0;
+  for (const match of text.matchAll(link)) {
+    html += escapeHtml(text.slice(cursor, match.index));
+    html += `<a href="${escapeHtml(match[2])}" target="_blank" rel="noopener noreferrer">${escapeHtml(match[1])}</a>`;
+    cursor = match.index + match[0].length;
+  }
+  return (html + escapeHtml(text.slice(cursor))).replace(/^\*\*Sources\*\*$/gm, "<strong>Sources</strong>").replace(/\n/g, "<br>");
+}
+const QUESTION_CATEGORIES = ["Game rules & scoring", "Robot build & inspection", "Programming & software", "Events, teams & awards", "Season resources & updates", "General FTC"];
+function questionKey(question) { return String(question || "").trim().toLowerCase(); }
+function categorizeQuestion(question) {
+  const text = String(question || "").toLowerCase();
+  if (/\b(java|c#|code|program|programming|photon|camera)\b/.test(text)) return "Programming & software";
+  if (/\b(motor|servo|battery|robot|cots|mechanism|intake|swerve|mecanum|drivetrain|calibrat|build|part)\b/.test(text)) return "Robot build & inspection";
+  if (/\b(team|event|competition|schedule|rank|portfolio|judge|referee|interview|scout|award)\b/.test(text)) return "Events, teams & awards";
+  if (/\b(score|scoring|points|pollen|nectar|flower|hive|match|auto|teleop|block|strategic|tipped|starting)\b/.test(text)) return "Game rules & scoring";
+  if (/\b(update|q&a|cic|manual|official|season|resource)\b/.test(text)) return "Season resources & updates";
+  return "General FTC";
+}
+function categorySlug(category) { return category.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+function escapeXml(value) { return escapeHtml(value); }
+function displayTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "an earlier visit" : date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "America/New_York" }); }
 
 // Run both legs to completion, then fuse with Reciprocal Rank Fusion. If one leg errors, use the other.
 async function retrieve(env, query) {
@@ -190,10 +394,11 @@ function retrievedSources(chunks) {
   for (const c of chunks) {
     const key = c.item && c.item.key;
     if (!key) continue;
-    if (!byKey.has(key)) byKey.set(key, { title: null, url: null, moment: null });
+    if (!byKey.has(key)) byKey.set(key, { title: null, channel: null, url: null, moment: null });
     const info = byKey.get(key);
     const text = c.text || "";
     const t = text.match(/^# (.+)$/m); if (t && !info.title) info.title = t[1].trim();
+    const ch = text.match(/^Channel: (.+)$/m); if (ch && !info.channel) info.channel = ch[1].trim();
     const l = text.match(/^Link: (\S+)/m); if (l && !info.url) info.url = l[1];
     const lm = text.match(/^Link \(this moment\): (\S+)/m); if (lm && !info.moment) info.moment = lm[1];
   }
@@ -205,13 +410,14 @@ function retrievedSources(chunks) {
     const n = normUrl(url);
     if (seen.has(n)) continue;
     seen.add(n);
-    out.push({ title: info.title.replace(/[\[\]]/g, "").slice(0, 90), url });
+    let label = info.title.replace(/[\[\]]/g, "");
+    const channel = info.channel && info.channel.replace(/[\[\]]/g, "");
+    if (channel && !label.endsWith(` — ${channel}`)) label = `${label} — ${channel}`;
+    out.push({ title: label.slice(0, 120), url });
   }
   return out;
 }
 
-// Reduce any link retrieval did not return to plain text, then append a Sources list built from the
-// retrieved items. Answers that cite nothing (declines, "the sources don't cover this") get no list.
 function withVerifiedLinks(answer, chunks) {
   const allowed = allowedUrls(chunks);
   let removed = 0;
@@ -242,8 +448,11 @@ function withVerifiedLinks(answer, chunks) {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8", ...cors() } });
 }
+function html(body, status = 200, headers = {}) {
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
+}
 function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl, questionEvent };
+export { withVerifiedLinks, retrievedSources, normUrl, questionEvent, renderAnswerMarkdown, categorizeQuestion, questionKey, answerSources, structuredQuestion };
