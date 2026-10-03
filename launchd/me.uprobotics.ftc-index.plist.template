@@ -5,9 +5,7 @@
   <!-- FTC index refresh at 23:00 and 05:00 local time, plus every 3 hours (YouTube cooldown resume) (America/New_York on the Mac mini; Tarun ruling 2026-09-13: two runs so a Team
        Update posted in the evening is indexed before school; the run lock skips an overlap). Set the Healthchecks.io check to
        a 1-day period with a 12-hour grace so either run keeps it green.
-       Install: sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template \
-                  > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
-                launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist -->
+       Install: bash launchd/install.sh (per-user symlink to boot-volume plist; no administrator access). -->
   <key>Label</key><string>me.uprobotics.ftc-index</string>
   <key>ProgramArguments</key>
   <array>

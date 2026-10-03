@@ -44,6 +44,7 @@ import youtube_sources as yt
 
 log = logging.getLogger("ftc-index")
 HERE = Path(__file__).resolve().parent
+YOUTUBE_STALE_DAYS = 7   # a YouTube block fails the run only after this long without a new caption
 KEY_RE = re.compile(r"^(manual|team_update|hub|qa|video|web)--.+--[0-9a-f]{8}\.md$")
 
 
@@ -134,9 +135,18 @@ class State:
         return cur.rowcount > 0
 
     def pending_videos(self, limit: int):
-        # newest first: RSS rows carry a date; flat rows keep channel listing order (already newest-first) via rowid
+        # Repair failed windows first; then newest first (Tarun, 2026-09-28). Undated flat-playlist rows use their discovery
+        # day (a new upload is found within a day), dated rows win ties, and each flat scan keeps its newest-first rowid order.
         return self.db.execute("""SELECT * FROM videos WHERE status='pending'
-                                  ORDER BY COALESCE(upload_date,'99999999') DESC, rowid ASC LIMIT ?""", (limit,)).fetchall()
+                                  ORDER BY COALESCE(note LIKE 'index retry:%', 0) DESC,
+                                           COALESCE(upload_date, strftime('%Y%m%d', discovered_at)) DESC,
+                                           upload_date IS NULL, rowid ASC LIMIT ?""", (limit,)).fetchall()
+
+    def days_since_caption(self) -> float | None:
+        row = self.db.execute("SELECT MAX(attempted_at) FROM videos WHERE status='captioned'").fetchone()
+        if not row or not row[0]:
+            return None
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(row[0])).total_seconds() / 86400
 
     def set_video(self, video_id: str, status: str, **kw):
         cols = ", ".join(f"{k}=?" for k in kw)
@@ -342,6 +352,9 @@ class Indexer:
                     log.warning("could not delete failed item %s: %s", key, e)
                 if self.state:
                     self.state.delete_item(our_id)    # forces a re-upload next run
+                    if our_id.startswith("video:"):
+                        vid = our_id.split(":", 1)[1].rsplit("-", 1)[0]
+                        self.state.set_video(vid, "pending", note=f"index retry: {msg}")
         if self.state:
             for row in self.state.pending_deletes():
                 if row["new_item_id"] in failed:
@@ -349,6 +362,18 @@ class Indexer:
                 try:
                     st = self.cf.item(row["new_item_id"]).get("status")
                 except Exception as e:
+                    unit = self.state.item(row["unit_id"])
+                    if "item_not_found" in str(e) and unit and unit["cf_item_id"] != row["new_item_id"]:
+                        # the replacement failed and was itself replaced by a later upload: retire this pending row
+                        try:
+                            self.cf.delete(row["old_item_id"])
+                        except Exception as de:
+                            if "item_not_found" not in str(de):
+                                log.warning("could not delete %s: %s", row["old_key"], de)
+                                continue
+                        self.state.clear_delete(row["old_item_id"])
+                        log.info("retired superseded pending delete %s", row["old_key"])
+                        continue
                     log.warning("could not check %s: %s", row["new_item_id"], e)
                     continue
                 if st == "completed":
@@ -503,6 +528,31 @@ class Indexer:
         log.info("discovery (%s): %d new videos", "flat" if flat else "rss", added)
         return added
 
+    def cookie_file(self) -> Path | None:
+        p = self.cfg["paths"].get("yt_cookies")
+        p = Path(p).expanduser() if p else None
+        return p if p and p.is_file() else None
+
+    def yt_dlp_args(self) -> list[str]:
+        """Signed-in fetch: yt-dlp rewrites the cookie file after each call, so the session stays current."""
+        cookies = self.cookie_file()
+        if not cookies:
+            return []
+        args = ["--cookies", str(cookies), "--ignore-no-formats-error"]
+        home = self.cfg["paths"].get("pot_server_home")
+        if home:
+            args += ["--extractor-args", f"youtubepot-bgutilscript:server_home={home}"]
+        return args
+
+    def youtube_blocked(self, msg: str):
+        """YouTube rate-limits caption fetches for days at a time; pending videos just wait. That is an error (fails the
+        health ping) only once no video has been captioned for YOUTUBE_STALE_DAYS, so it cannot mask FIRST-source failures."""
+        days = self.state.days_since_caption() if self.state else None
+        if days is None or days >= YOUTUBE_STALE_DAYS:
+            self.errors.append(f"{msg} (no captions for {'ever' if days is None else f'{days:.0f} days'})")
+        else:
+            log.warning("%s; last caption %.1f days ago, not failing the run", msg, days)
+
     def process_pending(self, limit: int):
         if not self.state:
             log.info("dry run without state: nothing pending to process")
@@ -522,14 +572,14 @@ class Indexer:
             vid = row["video_id"]
             ch = chans.get(row["channel_id"])
             try:
-                cap = yt.fetch_captions(vid, workdir, self.cfg["paths"]["yt_dlp"])
+                cap = yt.fetch_captions(vid, workdir, self.cfg["paths"]["yt_dlp"], self.yt_dlp_args())
             except yt.Blocked as e:
                 # One 429 can be specific to a video (its caption URL). Pause, count it, and only stop the day
                 # after two consecutive blocked videos. A video blocked three times over several runs is parked.
                 blocked_streak += 1
                 n = (row["note"] or "")
                 prior = int(n.split("blocked x")[1].split(";")[0]) if "blocked x" in n else 0
-                if prior + 1 >= 3:
+                if prior + 1 >= 3 and blocked_streak == 1:   # a 2nd consecutive block is the IP, not this video
                     self.state.set_video(vid, "error", note=f"blocked x{prior + 1}; parked: {str(e)[:120]}")
                     log.warning("video %s blocked %d times; parked", vid, prior + 1)
                 else:
@@ -624,7 +674,7 @@ def setup_logging(log_dir: Path):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "web", "reconcile", "test", "status"])
+    ap.add_argument("command", choices=["run", "first", "youtube", "backfill", "web", "reconcile", "test", "status", "captions"])
     ap.add_argument("--source", nargs="*", help="web: only these source ids")
     ap.add_argument("--max-pages", type=int, help="web: cap pages per source (testing)")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
@@ -682,6 +732,20 @@ def main(argv=None) -> int:
             except Exception as e:
                 ix.errors.append(f"web: {e}")
                 log.exception("web stage failed")
+        signed_in = ix.cookie_file() is not None
+        if args.command == "captions":
+            # One signed-in video per hourly launch, at a random minute (Tarun, 2026-09-28). No monitor ping.
+            if not signed_in:
+                log.info("captions: no cookie file; nothing to do")
+            else:
+                pause = random.uniform(0, cfg["youtube"]["defaults"].get("captions_jitter_seconds", 3300))
+                log.info("captions: sleeping %.0f s before one video", pause)
+                time.sleep(pause)
+                try:
+                    ix.process_pending(1)
+                except Exception as e:
+                    ix.errors.append(f"YouTube: {e}")
+                    log.exception("captions failed")
         if args.command in ("run", "youtube", "backfill"):
             try:
                 weekly = args.command == "backfill" or (
@@ -690,14 +754,22 @@ def main(argv=None) -> int:
                     ix.discover(flat=False)
                 if weekly:
                     ix.discover(flat=True)
-                ix.process_pending(limit)
+                if args.command == "run" and signed_in:
+                    # the hourly captions job owns caption fetches; the nightly run only watches that it keeps up
+                    days = state.days_since_caption() if state else None
+                    pending = state.db.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()[0] if state else 0
+                    if pending and (days is None or days >= YOUTUBE_STALE_DAYS):
+                        ix.errors.append(f"YouTube: hourly captions job stalled ({pending} pending, last caption "
+                                         f"{'never' if days is None else f'{days:.0f} days ago'}); re-export the cookie file?")
+                else:
+                    ix.process_pending(limit)
             except yt.Blocked as e:
                 ix.errors.append(f"YouTube blocked: {e}")
                 ix.mark_youtube_blocked(f"discovery: {e}")
             except Exception as e:
                 ix.errors.append(f"YouTube: {e}")
                 log.exception("YouTube stage failed")
-        if args.command in ("run", "first", "youtube", "backfill", "web"):
+        if args.command in ("run", "first", "youtube", "backfill", "web") or (args.command == "captions" and ix.uploaded):
             try:
                 ix.finalize()
             except Exception as e:

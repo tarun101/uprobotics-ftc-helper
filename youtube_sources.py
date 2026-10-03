@@ -159,7 +159,7 @@ def discover_flat(ch: Channel, yt_dlp: str = YT_DLP) -> list[Discovered]:
 
 # --------------------------------------------------------------------------- captions
 
-def fetch_captions(video_id: str, workdir: Path, yt_dlp: str = YT_DLP) -> Captions | None:
+def fetch_captions(video_id: str, workdir: Path, yt_dlp: str = YT_DLP, extra_args: list[str] | None = None) -> Captions | None:
     """Fetch English captions for one video. None when the video has no captions."""
     workdir.mkdir(parents=True, exist_ok=True)
     meta_path = workdir / f"{video_id}.meta.json"
@@ -169,7 +169,7 @@ def fetch_captions(video_id: str, workdir: Path, yt_dlp: str = YT_DLP) -> Captio
     cmd = [yt_dlp, "--no-simulate", "--skip-download", "--no-playlist", "--no-warnings",
            "--write-subs", "--write-auto-subs", "--sub-langs", "en", "--sub-format", "json3/vtt/best",   # one file: creator "en" if it exists, else auto "en"
            "-o", str(workdir / "%(id)s.%(ext)s"), "--print-to-file", fields, str(meta_path),
-           f"https://www.youtube.com/watch?v={video_id}"]
+           *(extra_args or []), f"https://www.youtube.com/watch?v={video_id}"]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if BLOCK_PATTERNS.search(p.stderr or ""):
         raise Blocked(p.stderr.strip()[-300:])

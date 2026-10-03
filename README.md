@@ -77,19 +77,22 @@ Decisions that would surprise a reader are in [docs/adr/](docs/adr/).
    ```
 8. Schedule (23:00 and 05:00 local time, so a Team Update posted in the evening is indexed before school):
    ```bash
-   sed "s#__REPO__#$PWD#g; s#__HOME__#$HOME#g" launchd/me.uprobotics.ftc-index.plist.template > ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist
-   cp ~/Library/LaunchAgents/me.uprobotics.ftc-index.plist /Users/Shared/ftc-tools/
-   launchctl bootstrap gui/$(id -u) /Users/Shared/ftc-tools/me.uprobotics.ftc-index.plist
+   bash launchd/install.sh
    ```
-   On the Mac mini `launchctl bootstrap` returns "Input/output error" for a plist under `/Volumes/home`, so it is
-   loaded from the boot-volume copy; the `~/Library/LaunchAgents` copy is there for login-time loading. Check with
-   `launchctl print gui/$(id -u)/me.uprobotics.ftc-index`.
+   No administrator access is needed. The installer stores a user-owned plist in
+   `/Users/Shared/ftc-tools-<uid>/` on the boot volume and links to it from `~/Library/LaunchAgents`.
+   On this Mac, `/Volumes/home` is mounted with ownership disabled: launchd rejects a plist stored
+   directly there, but accepts a symlink to the boot-volume file, including during directory scanning.
+   The old home-directory plist is archived. A missing job is registered immediately; an already-loaded
+   job is left running. The login Keychain and 23:00/05:00 schedule are preserved.
+   Check `launchctl print gui/$(id -u)/me.uprobotics.ftc-index` after the next login.
 9. Page: `cd page && wrangler deploy` (the endpoint ID and report address are already in `public/index.html`).
    On the Mac mini, npm-downloaded native binaries (esbuild, workerd) are killed on launch, so wrangler lives in
    `/Users/Shared/ftc-tools` (installed with `--ignore-scripts`), runs with `ESBUILD_BINARY_PATH=/opt/homebrew/bin/esbuild`
    (`brew install esbuild`), and its nested esbuild `main.js` has the version constant patched to the brew version.
 
 Logs: `~/Library/Logs/ftc-index/ftc-index.log`. State: `~/Library/Application Support/ftc-index/state.sqlite`.
+Failed video windows requeue their video ahead of new backfill so they are retried on the next run.
 A run exits non-zero on any failure and does not ping the Monitor. Set the Healthchecks.io check to a 1-day period with a
 12-hour grace; the weekly question test sends `<ping URL>/fail` when retrieval drops below 27/30, which alerts at once.
 
@@ -101,7 +104,7 @@ A run exits non-zero on any failure and does not ping the Monitor. Set the Healt
 | Run logged `ok=False` | Read the `errors` list in the last `run … finished` log line. FIRST errors usually mean the hub or manual layout changed (`first_sources.py`). YouTube `blocked` means a 429; the next run retries, and a video parked after three blocks is listed in `status`. |
 | "/fail" ping from the question test | Open the newest `tests/results/*-30-questions.md`; each failed question names the missing source. Run `ftc_index.py first` if a rule Item is missing, or check the AI Search instance for `error` items. |
 | Answers stale but runs green | AI Search may be re-indexing; `ftc_index.py status` shows counts, the dashboard shows the queue. |
-| Total loss of the Mac mini | Nothing durable is lost. On any Mac: clone the repo, do Setup 1–4 and 6–8, then `ftc_index.py first` and `backfill` until `videos.pending` is 0 (about two days at 150 videos a run). |
+| Total loss of the Mac mini | Nothing durable is lost. On any Mac: clone the repo, do Setup 1–4 and 6–8, then `ftc_index.py first` and `backfill` until `videos.pending` is 0 (25 videos per run by default). |
 
 Any source owner who asks for removal gets it within a day: disable the channel or web source in `config.yaml` (or drop the
 source type) and run `ftc_index.py reconcile`; stale Items are deleted.
@@ -132,7 +135,7 @@ just points `api-url` at `https://ftc.uprobotics.tech/api/`. A rate-limit bindin
 The Worker also enforces two properties after generation: any Markdown or bare link whose URL did not appear in the
 retrieved chunks is reduced to plain text, and every answer that cites anything ends with a **Sources** list of up to five
 retrieved Items (title and link from each Item's header). `node --test tests/worker_links.test.mjs` covers this.
-Questions are not logged; the only record of a bad answer is what a student sends through "Report a problem".
+Each submitted chat question is saved privately with its UTC timestamp and Cloudflare-provided city and country code for product-quality reporting. The Worker does not save IP addresses, browser identifiers, or chat history; source and test calls can appear in the record. The only record of a bad answer remains what a student sends through "Report a problem".
 
 ## Item keys and metadata
 

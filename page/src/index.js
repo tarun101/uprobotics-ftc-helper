@@ -455,4 +455,4 @@ function cors() {
   return { "access-control-allow-origin": "https://ftc.uprobotics.tech", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type, cf-ai-search-source" };
 }
 
-export { withVerifiedLinks, retrievedSources, normUrl, renderAnswerMarkdown, categorizeQuestion, questionKey, answerSources, structuredQuestion };
+export { withVerifiedLinks, retrievedSources, normUrl, questionEvent, renderAnswerMarkdown, categorizeQuestion, questionKey, answerSources, structuredQuestion };
