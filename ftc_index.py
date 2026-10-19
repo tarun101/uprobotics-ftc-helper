@@ -33,6 +33,7 @@ import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import requests
@@ -178,6 +179,55 @@ def now() -> str:
 
 # --------------------------------------------------------------------------- Cloudflare AI Search items
 
+# YouTube 429s are handled separately (60s delay, 3h block). This is only the AI Search Items API.
+_CF_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_CF_IDEMPOTENT = frozenset({"GET", "DELETE", "HEAD", "PUT"})
+_CF_MAX_ATTEMPTS = 6
+_CF_BACKOFF_CAP_S = 60.0
+_CF_RETRY_AFTER_CAP_S = 120.0
+_CF_OVERLOAD_FLOOR_S = 5.0
+_CF_DELETE_PACE_S = 1.0
+
+
+def _retry_after_seconds(response: requests.Response) -> float | None:
+    """Retry-After as delay seconds, or None when the header is missing or not a delay."""
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (dt - datetime.now(timezone.utc)).total_seconds()
+
+
+def _cf_retry_delay(attempt: int, response: requests.Response | None) -> float:
+    """Seconds to wait before another try. Retry-After wins when it parses; otherwise exponential backoff.
+
+    ai_search_instance_overloaded with no Retry-After waits at least a few seconds so a burst of
+    deletes does not immediately hit the same overloaded instance again.
+    """
+    if response is not None:
+        retry_after = _retry_after_seconds(response)
+        if retry_after is not None:
+            return min(max(0.0, retry_after), _CF_RETRY_AFTER_CAP_S)
+    delay = min((2 ** attempt) * 2.0, _CF_BACKOFF_CAP_S)
+    if response is not None and "ai_search_instance_overloaded" in (response.text or ""):
+        delay = max(delay, _CF_OVERLOAD_FLOOR_S)
+    return delay
+
+
 class AISearch:
     def __init__(self, account_id: str, instance: str, token: str):
         if not account_id or not token:
@@ -185,16 +235,34 @@ class AISearch:
         self.base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-search/instances/{instance}"
         self.s = requests.Session()
         self.s.headers["Authorization"] = f"Bearer {token}"
+        self._next_delete_at = 0.0
 
     def _req(self, method: str, path: str, **kw) -> dict:
         last = None
-        for attempt in range(4):
-            r = self.s.request(method, self.base + path, timeout=180, **kw)
-            if r.status_code in (429, 500, 502, 503, 504):
-                last = f"HTTP {r.status_code}: {r.text[:200]}"
-                time.sleep(2 ** attempt * 2)
+        method_u = method.upper()
+        for attempt in range(_CF_MAX_ATTEMPTS):
+            try:
+                r = self.s.request(method, self.base + path, timeout=180, **kw)
+            except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+                # Timeouts and connection resets are retried only for idempotent calls. A dropped POST
+                # may already have been stored, and retrying it would upload a second copy.
+                last = f"{type(e).__name__}: {e}"
+                if method_u not in _CF_IDEMPOTENT or attempt == _CF_MAX_ATTEMPTS - 1:
+                    break
+                delay = _cf_retry_delay(attempt, None)
+                log.warning("Cloudflare %s %s failed (%s); retrying in %.0fs", method_u, path, str(e)[:160], delay)
+                time.sleep(delay)
                 continue
-            if r.status_code == 404 and method == "DELETE":
+            if r.status_code in _CF_RETRY_STATUSES:
+                last = f"HTTP {r.status_code}: {r.text[:200]}"
+                if attempt == _CF_MAX_ATTEMPTS - 1:
+                    break
+                delay = _cf_retry_delay(attempt, r)
+                why = "overloaded" if "ai_search_instance_overloaded" in (r.text or "") else f"HTTP {r.status_code}"
+                log.warning("Cloudflare %s %s %s; retrying in %.0fs", method_u, path, why, delay)
+                time.sleep(delay)
+                continue
+            if r.status_code == 404 and method_u == "DELETE":
                 return {"success": True, "result": None, "not_found": True}
             try:
                 data = r.json()
@@ -244,7 +312,19 @@ class AISearch:
             page += 1
 
     def delete(self, item_id: str) -> None:
-        self._req("DELETE", f"/items/{item_id}")
+        """Delete one item, leaving a short gap before the next delete.
+
+        Finalize and reconcile issue many deletes back to back, which is when the instance returns
+        ai_search_instance_overloaded. The gap is in addition to any Retry-After wait inside _req.
+        """
+        wait = self._next_delete_at - time.time()
+        if wait > 0:
+            log.debug("pacing AI Search delete %.1fs", wait)
+            time.sleep(wait)
+        try:
+            self._req("DELETE", f"/items/{item_id}")
+        finally:
+            self._next_delete_at = time.time() + _CF_DELETE_PACE_S
 
     def find_by_key(self, key: str) -> dict | None:
         data = self._req("GET", "/items", params={"key": key, "source": "builtin", "per_page": 5})

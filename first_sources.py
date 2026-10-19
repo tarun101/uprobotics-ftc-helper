@@ -1,12 +1,12 @@
 """Official FIRST content for the UP Robotics FTC Helper.
 
-Fetches only URLs under https://ftc-resources.firstinspires.org/ftc/game and
-turns them into small Markdown documents ("units"):
+Fetches only URLs under https://ftc-resources.firstinspires.org/ftc/game
+(and the public FTC Q&A board) and turns them into small Markdown documents ("units"):
 
   * the HTML Competition Manual -> one item per rule, one per heading section
   * Team Update PDFs            -> one item per Team Update
   * the season hub page         -> one item
-  * the official Q&A system      -> one item per answered question, from its public RSS feed (never logs in)
+  * the official Q&A system      -> one item per answered question, from the public board (never logs in)
 
 Nothing here talks to Cloudflare or touches state; see ftc_index.py.
 """
@@ -28,9 +28,12 @@ log = logging.getLogger("ftc-index.first")
 HOST = "ftc-resources.firstinspires.org"
 GAME_PATH = "/ftc/game"
 HUB_URL = f"https://{HOST}{GAME_PATH}"
-QA_HOST = "ftc-qa.firstinspires.org"                       # readable without login; asking needs a Lead Coach login we never use
-QA_RSS_URL = f"https://{QA_HOST}/rss/answers.rss"
-QA_ONEPAGE_URL = f"https://{QA_HOST}/onepage.html"
+QA_LEGACY_HOST = "ftc-qa.firstinspires.org"              # old host; now 302s at the current season board. Asking still needs a Lead Coach login we never use
+QA_LEGACY_RSS_URL = f"https://{QA_LEGACY_HOST}/rss/answers.rss"
+QA_HOST = "game-qa.firstinspires.org"                     # public read of the current board only; see allowed()
+# Where the legacy URL redirected on 2026-10-19. Used only when that redirect is missing.
+QA_BOARD_FALLBACK = "/boards/2027/FTC/QA"
+QA_BOARD_RE = re.compile(r"^/boards/(\d+)/FTC/QA(?:/|$)")
 USER_AGENT = "UPRoboticsFTCHelper/1.0 (+https://ftc.uprobotics.tech; community tool, not affiliated with FIRST)"
 
 RULE_ID_RE = re.compile(r"^[A-Z]{1,2}\d{3}$")
@@ -109,14 +112,47 @@ class HubInfo:
 
 # --------------------------------------------------------------------------- fetch
 
-def allowed(url: str) -> bool:
-    """Only the game hub tree and the public Q&A site are ever fetched."""
+def _https_host(url: str) -> str | None:
+    """Hostname of an https URL with no userinfo and no non-default port, else None.
+
+    Default port 443 is ignored so Atom links like https://host:443/... still match.
+    Userinfo is rejected so https://evil@allowed-host/ is not treated as the allowed host.
+    """
     p = urlparse(url)
-    if p.scheme != "https":
+    if p.scheme != "https" or p.username or p.password:
+        return None
+    if p.port not in (None, 443):
+        return None
+    return (p.hostname or "").lower() or None
+
+
+def qa_board_path(url: str) -> str | None:
+    """'/boards/2027/FTC/QA' when url is that public FTC board (or a page under it).
+
+    Other programs on the same host (FRC, and anything outside /boards/<year>/FTC/QA) are not allowed.
+    """
+    if _https_host(url) != QA_HOST:
+        return None
+    path = urlparse(url).path or ""
+    if ".." in path or "\\" in path:
+        return None
+    m = QA_BOARD_RE.match(path)
+    if not m:
+        return None
+    return f"/boards/{m.group(1)}/FTC/QA"
+
+
+def allowed(url: str) -> bool:
+    """Only the game hub tree, the legacy Q&A host, and the public FTC Q&A board are ever fetched."""
+    host = _https_host(url)
+    if host is None:
         return False
-    if p.netloc == QA_HOST:
+    if host == QA_LEGACY_HOST:
         return True
-    return p.netloc == HOST and (p.path == GAME_PATH or p.path.startswith(GAME_PATH + "/"))
+    if qa_board_path(url):
+        return True
+    p = urlparse(url)
+    return host == HOST and (p.path == GAME_PATH or p.path.startswith(GAME_PATH + "/"))
 
 
 def make_session() -> requests.Session:
@@ -125,12 +161,12 @@ def make_session() -> requests.Session:
     return s
 
 
-def fetch(session: requests.Session, url: str) -> requests.Response:
+def fetch(session: requests.Session, url: str, headers: dict | None = None) -> requests.Response:
     """GET an allowed URL (see allowed()), following redirects that stay allowed."""
     if not allowed(url):
-        raise SourceError(f"refusing to fetch outside {HUB_URL} / {QA_HOST}: {url}")
+        raise SourceError(f"refusing to fetch outside the game hub or the public FTC Q&A board: {url}")
     log.debug("GET %s", url)
-    r = session.get(url, timeout=90, allow_redirects=True)
+    r = session.get(url, timeout=90, allow_redirects=True, headers=headers)
     if not allowed(r.url):
         raise SourceError(f"redirect left the allowed hosts: {url} -> {r.url}")
     if r.status_code != 200:
@@ -502,7 +538,7 @@ def team_update_items(session: requests.Session, hub: HubInfo) -> list[Item]:
 
 
 def qa_id(link: str, fallback: str) -> str:
-    """'https://ftc-qa.firstinspires.org/qa/123' -> '123'; otherwise a slug of the guid/title."""
+    """'https://game-qa.firstinspires.org/boards/2027/FTC/QA/qa/28' -> '28'; otherwise a slug of the guid/title."""
     path = urlparse(link or "").path.rstrip("/")
     m = re.search(r"/qa/([^/]+)$", path)
     raw = m.group(1) if m else (fallback or "")
@@ -523,40 +559,119 @@ def html_to_text(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(l for l in lines if l)).strip()
 
 
-def qa_items(session: requests.Session) -> list[Item]:
-    """One item per answered question from the official Q&A system's public RSS feed.
+def discover_qa_board(session: requests.Session) -> str:
+    """Current public FTC Q&A board path, e.g. '/boards/2027/FTC/QA'.
 
-    The feed is empty until the season's Q&A opens (2026-09-28 for BIOBUZZ) and resets each season.
-    An unreadable feed raises; an empty one returns [] (the caller decides whether that is suspicious)."""
-    import calendar
-    import feedparser
-    r = fetch(session, QA_RSS_URL)
-    feed = feedparser.parse(r.content)
-    if feed.bozo and not feed.entries:
-        raise SourceError(f"Q&A feed unreadable: {getattr(feed, 'bozo_exception', 'parse error')}")
+    The legacy host 302s to .../rss/answers.rss on the new host (that path itself 404s). The Location
+    still names the season board. Anything else is refused: redirects off the board are not followed.
+    """
+    if not allowed(QA_LEGACY_RSS_URL):
+        raise SourceError(f"refusing to fetch outside the game hub or the public FTC Q&A board: {QA_LEGACY_RSS_URL}")
+    log.debug("GET %s", QA_LEGACY_RSS_URL)
+    try:
+        r = session.get(QA_LEGACY_RSS_URL, timeout=90, allow_redirects=False)
+    except requests.RequestException as e:
+        raise SourceError(f"Q&A board redirect check failed: {e}") from e
+    loc = r.headers.get("Location")
+    if loc and r.status_code in (301, 302, 303, 307, 308):
+        dest = urljoin(QA_LEGACY_RSS_URL, loc)
+        board = qa_board_path(dest)
+        if not board:
+            raise SourceError(f"redirect left the allowed hosts: {QA_LEGACY_RSS_URL} -> {dest}")
+        return board
+    log.warning("legacy Q&A URL did not redirect to a board (HTTP %s); using %s", r.status_code, QA_BOARD_FALLBACK)
+    return QA_BOARD_FALLBACK
+
+
+def _qa_epoch(raw) -> int | None:
+    """FIRST board timestamps are epoch milliseconds; plain epoch seconds are accepted too."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    v = float(raw)
+    if v > 10_000_000_000:
+        v /= 1000.0
+    if v <= 0:
+        return None
+    return int(v)
+
+
+def _qa_number(q: dict) -> str:
+    n = q.get("number")
+    if isinstance(n, bool):
+        return ""
+    if isinstance(n, int):
+        return str(n)
+    if isinstance(n, float) and n.is_integer():
+        return str(int(n))
+    if isinstance(n, str) and n.strip():
+        return re.sub(r"[^A-Za-z0-9._-]+", "-", n.strip()).strip("-")[:40]
+    return ""
+
+
+def items_from_qa_questions(questions: list, board: str) -> list[Item]:
+    """One Item per answered question. `board` is '/boards/2027/FTC/QA'."""
+    if not isinstance(questions, list):
+        raise SourceError("Q&A questions payload was not a list")
+    board_url = f"https://{QA_HOST}{board}"
     items: list[Item] = []
-    for e in feed.entries:
-        link = (e.get("link") or "").strip()
-        qid = qa_id(link, e.get("id") or e.get("title") or "")
-        title = norm(e.get("title") or "") or f"Q&A {qid}"
-        html = ""
-        if e.get("content"):
-            html = e["content"][0].get("value") or ""
-        html = html or e.get("summary") or e.get("description") or ""
-        text = html_to_text(html)
-        when = e.get("published_parsed") or e.get("updated_parsed")
-        published = calendar.timegm(when) if when else int(datetime.now(timezone.utc).timestamp())
-        date_txt = datetime.fromtimestamp(published, timezone.utc).strftime("%b %d, %Y") if when else "date not listed"
-        url = link if allowed(link) else QA_ONEPAGE_URL
+    seen: set[str] = set()
+    for q in questions:
+        if not isinstance(q, dict) or q.get("status") != "ANSWERED":
+            continue
+        answer = q.get("answer") if isinstance(q.get("answer"), dict) else {}
+        qid = _qa_number(q) or qa_id("", str(q.get("questionId") or q.get("title") or ""))
+        if not qid or qid in seen:
+            if qid in seen:
+                log.warning("duplicate Q&A id %s; keeping first", qid)
+            continue
+        seen.add(qid)
+        raw_title = q.get("title") or ""
+        title = html_to_text(raw_title) if "<" in str(raw_title) else norm(str(raw_title))
+        title = title or f"Q&A {qid}"
+        qtext = html_to_text(q.get("content") or "")
+        atext = html_to_text(answer.get("content") or "")
+        published = next((t for t in (
+            _qa_epoch(answer.get("modifiedAt")), _qa_epoch(answer.get("createdAt")),
+            _qa_epoch(q.get("modifiedAt")), _qa_epoch(q.get("submittedAt")),
+        ) if t is not None), int(datetime.now(timezone.utc).timestamp()))
+        dated = any(_qa_epoch(v) is not None for v in (
+            answer.get("modifiedAt"), answer.get("createdAt"), q.get("modifiedAt"), q.get("submittedAt")))
+        date_txt = datetime.fromtimestamp(published, timezone.utc).strftime("%b %d, %Y") if dated else "date not listed"
+        url = f"{board_url}/qa/{qid}"
+        if not allowed(url):
+            url = board_url
+        lines = []
+        if q.get("rule"):
+            lines.append(f"Rule: {norm(str(q['rule']))}")
+        if q.get("topic"):
+            lines.append(f"Topic: {norm(str(q['topic']))}")
+        if not atext:
+            log.warning("Q&A %s has no answer text; indexing the question", qid)
+        lines.append("Question:\n\n" + (qtext or title))
+        lines.append("Answer:\n\n" + (atext or title))
         head = [f"# Q&A {qid}: {title}", f"Source: FIRST Tech Challenge official Q&A, answered {date_txt}", f"Link: {url}", "Type: Q&A",
                 "Note: official Q&A answers clarify the Competition Manual; the newest answer wins over older manual text."]
-        if len(text) < 20:
-            log.warning("Q&A %s has no answer text in the feed; indexing the title only", qid)
-            text = title
         items.append(Item(item_id=f"qa:{qid}", source_type="qa", title=f"Q&A {qid}: {title}",
-                          body="\n".join(head) + "\n---\n\n" + text + "\n", url=url, published=published))
-    log.info("Q&A feed: %d answered questions", len(items))
+                          body="\n".join(head) + "\n---\n\n" + "\n\n".join(lines) + "\n", url=url, published=published))
+    log.info("Q&A board: %d answered questions", len(items))
     return items
+
+
+def qa_items(session: requests.Session) -> list[Item]:
+    """One item per answered question on the public FTC Q&A board.
+
+    The legacy RSS URL redirects to /rss/answers.rss, which 404s. The board's Atom feed
+    (answers.atom) parses, but its entries are the question text only. The same board's
+    public /questions JSON includes the official answer, so that is what we index.
+    An empty board returns [] (the caller decides whether that is suspicious)."""
+    board = discover_qa_board(session)
+    url = f"https://{QA_HOST}{board}/questions"
+    r = fetch(session, url, headers={"Accept": "application/json"})
+    try:
+        payload = r.json()
+    except ValueError as e:
+        raise SourceError(f"Q&A questions feed was not JSON: {e}") from e
+    return items_from_qa_questions(payload, board)
 
 
 def qa_archive_items(session: requests.Session, hub: HubInfo) -> list[Item]:
@@ -627,7 +742,7 @@ def collect_first(session: requests.Session | None = None) -> tuple[list[Item], 
 
 
 def collect_qa(session: requests.Session, hub: HubInfo) -> list[Item]:
-    """Q&A items from the public RSS feed; if the feed has nothing and the hub links an archive, use that."""
+    """Q&A items from the public board; if that has nothing and the hub links an archive, use that."""
     items = qa_items(session)
     if not items and hub.qa_archive:
         items = qa_archive_items(session, hub)
