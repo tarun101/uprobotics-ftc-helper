@@ -17,7 +17,7 @@ or use the "Report a problem" link on the page instead.
 Mac mini (home internet) — launchd at 23:00 and 05:00 ET
   ftc_index.py run
     ├─ FIRST: HTML manual → one Item per rule / section; Team Update PDFs → one Item each; hub → one Item
-    ├─ Q&A: FIRST's public answers RSS feed → one Item per answered question (never logs in)
+    ├─ Q&A: FIRST's public Q&A board → one Item per answered question (never logs in)
     ├─ YouTube: RSS + yt-dlp captions → one Item (a Window) per 2–3 minute stretch, with a &t= link
     ├─ docs sites (weekly): gm0, FTC Docs, REV, FIRST field/team/event hubs, season overview, community blog/forum, SDK, FTCSIM → one Item per page
     ├─ state.sqlite: what is uploaded, content hashes, video queue
@@ -31,8 +31,9 @@ Cloudflare AI Search instance "ftc-2026" (built-in storage, hybrid search)
     └─ public endpoint: /mcp → Claude/ChatGPT skill
 ```
 
-Only URLs under `https://ftc-resources.firstinspires.org/ftc/game/` and on `ftc-qa.firstinspires.org` (public,
-read-only) are fetched. No video or audio is downloaded; captions only. No logins, cookies, or proxies.
+Only URLs under `https://ftc-resources.firstinspires.org/ftc/game/`, on `ftc-qa.firstinspires.org`, and on the
+public FTC board `https://game-qa.firstinspires.org/boards/<year>/FTC/QA/` (read-only) are fetched. No video or
+audio is downloaded; captions only. No logins, cookies, or proxies.
 
 Vocabulary (Source, Item, Window, Chunk, Run, Round, Season, Rollover) is defined in [CONTEXT.md](CONTEXT.md).
 Decisions that would surprise a reader are in [docs/adr/](docs/adr/).
@@ -42,7 +43,7 @@ Decisions that would surprise a reader are in [docs/adr/](docs/adr/).
 | Path | Purpose |
 |---|---|
 | `ftc_index.py` | CLI: `run`, `first`, `youtube`, `backfill`, `web`, `reconcile`, `test`, `status`; state, upload, politeness |
-| `first_sources.py` | Manual splitter (rule anchors + headings), Team Update PDFs, hub, Q&A feed |
+| `first_sources.py` | Manual splitter (rule anchors + headings), Team Update PDFs, hub, Q&A board |
 | `youtube_sources.py` | RSS / flat-playlist discovery, yt-dlp captions, 2–3 minute windows, season labels |
 | `config.yaml` | Channels and filters, instance name, paths (no secrets) |
 | `page/` | `ftc.uprobotics.tech`: `/` is the chat, `/about/` the overview (AI Search UI snippets; `/chat/` redirects to `/`) + `src/index.js`, the API Worker the widgets call (AI Search, Workers AI, and rate-limit bindings in `wrangler.jsonc`) |
